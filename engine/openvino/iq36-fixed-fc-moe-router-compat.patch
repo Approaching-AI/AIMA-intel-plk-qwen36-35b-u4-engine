@@ -1,0 +1,56 @@
+diff --git a/src/plugins/intel_gpu/src/plugin/transformations/fuse_moe_3gemm_compressed.cpp b/src/plugins/intel_gpu/src/plugin/transformations/fuse_moe_3gemm_compressed.cpp
+index a9c464e8b5c..bcc30c3ec69 100644
+--- a/src/plugins/intel_gpu/src/plugin/transformations/fuse_moe_3gemm_compressed.cpp
++++ b/src/plugins/intel_gpu/src/plugin/transformations/fuse_moe_3gemm_compressed.cpp
+@@ -5,6 +5,7 @@
+ #include "fuse_moe_3gemm_compressed.hpp"
+ 
+ #include <memory>
++#include <string>
+ 
+ #include "intel_gpu/op/moe_3gemm_fused_compressed.hpp"
+ #include "openvino/core/graph_util.hpp"
+@@ -48,9 +49,24 @@ FuseMOE3GemmCompressed::FuseMOE3GemmCompressed() {
+     // the FusedMOE3GemmCompressed consumes it as new input instead of hidden_state_m
+     auto hidden_state_reshape = optional<ov::op::v1::Reshape>({hidden_state_m, ANY});
+     auto routing_matmul = wrap_type<ov::op::v0::MatMul>({hidden_state_reshape | ANY, ANY}, consumers_count(1));
++    // The locked IQ36 graph can replace the router MatMul together with the
++    // three shared-expert projections.  Its fourth F16 output is restored to
++    // the original F32 routing edge before Softmax.  Accept that exact edge as
++    // the routing-logit producer so MOE3Gemm fusion remains independent of
++    // how the logits were computed.
++    auto fixed_fc_router = any_input([](const ov::Output<ov::Node>& output) {
++        const auto node = output.get_node_shared_ptr();
++        return node && std::string(node->get_type_name()) == "IQ36FixedFC4" &&
++               output.get_index() == 3 &&
++               node->get_friendly_name().find("router_shared_input") != std::string::npos &&
++               output.get_target_inputs().size() == 1;
++    });
++    auto fixed_fc_router_restore =
++        wrap_type<ov::op::v0::Convert>({fixed_fc_router}, consumers_count(1));
++    auto routing_logits = routing_matmul | fixed_fc_router_restore;
+ 
+     // ── Softmax routing branch ──────────────────────────────────────────
+-    auto sm_softmax = wrap_type<ov::op::v8::Softmax>({routing_matmul}, consumers_count(1));
++    auto sm_softmax = wrap_type<ov::op::v8::Softmax>({routing_logits}, consumers_count(1));
+     auto sm_topk = wrap_type<ov::op::v11::TopK>({sm_softmax, ANY});
+     sm_topk->set_output_size(2);
+ 
+@@ -69,7 +85,7 @@ FuseMOE3GemmCompressed::FuseMOE3GemmCompressed() {
+     auto sm_unsqueeze = wrap_type<ov::op::v0::Unsqueeze>({sm_transpose, ANY}, consumers_count(1));
+ 
+     // ── Sigmoid+bias routing branch ─────────────────────────────────────
+-    auto sig_sigmoid = wrap_type<ov::op::v0::Sigmoid>({routing_matmul});
++    auto sig_sigmoid = wrap_type<ov::op::v0::Sigmoid>({routing_logits});
+     auto sig_routing_bias = ANY;
+     auto sig_add = wrap_type<ov::op::v1::Add>({sig_sigmoid, sig_routing_bias}, consumers_count(1));
+     auto sig_topk = wrap_type<ov::op::v11::TopK>({sig_add, ANY});
+@@ -167,7 +183,7 @@ FuseMOE3GemmCompressed::FuseMOE3GemmCompressed() {
+         auto hs_reshaped = pattern_map.count(hidden_state_reshape) ? pattern_map.at(hidden_state_reshape) : pattern_map.at(hidden_state_m);
+         OutputVector args{
+             hs_reshaped,
+-            pattern_map.at(routing_matmul),
++            pattern_map.at(routing_logits),
+             pattern_map.at(gate_wei_m),
+             pattern_map.at(gate_scale_m),
+             pattern_map.at(gate_zp_m),

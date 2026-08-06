@@ -1,0 +1,127 @@
+{
+  "contract_version": "0.1",
+  "workstream": "intel-qwen36-35b-a3b-gguf-q4km",
+  "contract_role": "product_model_and_runtime_semantics",
+  "captured_at": "2026-07-13",
+  "identity_capture": {
+    "method": "local SHA-256 over the locked text-generation model/tokenizer files listed below",
+    "runtime_evidence": "output/r0-openvino-denominator-matrix-20260713Tseq769-raw-core-rest-cleanZ/worker-result.json",
+    "profile_evidence": "output/openvino-hidden-prefill-profile-20260712Tseq751cleanZ/profile.json"
+  },
+  "product_model": {
+    "name": "Qwen3.6-35B-A3B OpenVINO U4",
+    "path": "/home/intel/Qwen3.6-35B-A3B-ov",
+    "format": "OpenVINO IR",
+    "weight_format": "U4 compressed constants",
+    "batch_size": 1,
+    "context_length": 262144,
+    "architecture": {
+      "layers": 40,
+      "linear_attention_layers": 30,
+      "full_attention_layers": 10,
+      "hidden_size": 2048,
+      "attention_heads": 16,
+      "kv_heads": 2,
+      "head_dim": 256,
+      "experts": 256,
+      "active_experts": 8,
+      "moe_intermediate_size": 512
+    },
+    "locked_files": {
+      "openvino_language_model.xml": {
+        "bytes": 8631090,
+        "sha256": "fae1047f6a758ded4fab95f5faee9bf68f92b4433d778496bd9d44efa51cdbb0"
+      },
+      "openvino_language_model.bin": {
+        "bytes": 18646205498,
+        "sha256": "46140b595760e891d9626c5bfaffc2c998cce176d0de7f6c290af5ae1f2393a4"
+      },
+      "openvino_text_embeddings_model.xml": {
+        "bytes": 3257,
+        "sha256": "dec873d8028fff2f1111b9a8a3c7ce2e3d00443a44dcef069c3be8787c11f6e7"
+      },
+      "openvino_text_embeddings_model.bin": {
+        "bytes": 1017118724,
+        "sha256": "21b75aed439e3c5a19daedff1c3d564e91a972061f29c100285f97bceb264bf0"
+      },
+      "openvino_tokenizer.xml": {
+        "bytes": 32508,
+        "sha256": "5698ad09acd3e6a7f5a9d09795281b601dd100d48e313d07e39707b9001bafa9"
+      },
+      "openvino_tokenizer.bin": {
+        "bytes": 9631154,
+        "sha256": "ea3fcce2251902efffbc774cbc8ffff69e981412347a1e510e430c6557a63701"
+      },
+      "openvino_detokenizer.xml": {
+        "bytes": 15514,
+        "sha256": "469e2221e22818fb5f22f961ed194b24b8d948df3bfb394c4bb3eb564084b28d"
+      },
+      "openvino_detokenizer.bin": {
+        "bytes": 3828184,
+        "sha256": "48fc2c6a7a1056994982911eb9695826acef933c3d742364c56d16317a0b2a79"
+      },
+      "config.json": {
+        "bytes": 3188,
+        "sha256": "a2f437dca9dbdf94133eebe54b4057790701ee6dc5a7fd892ee2bfea45445312"
+      },
+      "generation_config.json": {
+        "bytes": 213,
+        "sha256": "07f857aba5260b2ea2513f80de8062d086661f00eada0a3794964e665ba680f5"
+      },
+      "tokenizer.json": {
+        "bytes": 19989343,
+        "sha256": "87a7830d63fcf43bf241c3c5242e96e62dd3fdc29224ca26fed8ea333db72de4"
+      },
+      "tokenizer_config.json": {
+        "bytes": 1139,
+        "sha256": "e98f1901ac6f0adff67b1d540bfa0c36ac1a0cf59eb72ed78146ef89aafa1182"
+      }
+    }
+  },
+  "runtime_contract": {
+    "baseline": {
+      "role": "immutable_stock_correctness_reference_and_performance_denominator",
+      "device": "GPU",
+      "openvino_runtime_version": "2026.2.0-21902-90214e5be05-releases/2026/2",
+      "openvino_genai_version": "2026.2.0.0-3121-adf73e80e66",
+      "custom_gpu_config_allowed": false,
+      "model_mutation_allowed": false,
+      "prefix_caching": false,
+      "apply_chat_template": false,
+      "fresh_isolated_worker_required": true,
+      "effective_plugin_properties_capture_required": true
+    },
+    "candidate": {
+      "final_runtime_dependency": "OpenVINO GPU",
+      "custom_opencl_gpu_operations_allowed": true,
+      "derived_static_graphs_allowed": true,
+      "state_precision_changes_allowed_under_correctness_gate": true,
+      "locked_model_directory_mutation_allowed": false,
+      "required_diff_scope": "candidate-only graph, plugin property, custom-kernel, and state-layout changes must be enumerated in every promotion manifest"
+    },
+    "comparison_isolation": {
+      "same_host_driver_power_state_required": true,
+      "same_openvino_release_base_required": true,
+      "candidate_configuration_must_not_leak_into_baseline": true,
+      "separate_plugin_cache_and_custom_config_paths_required": true,
+      "stock_baseline_worker_must_not_load_candidate_custom_op_config": true
+    }
+  },
+  "correctness_reference": {
+    "product_reference": "locked stock OpenVINO GPU U4 model and state semantics",
+    "candidate_teacher_forced_kld_max": 0.005,
+    "candidate_teacher_forced_top1_min": 0.99,
+    "candidate_deterministic_greedy_exact_match_required": true,
+    "long_context_sentinel_truth_required": true,
+    "legacy_gguf_reference_role": "diagnostic_only",
+    "legacy_reference_consensus_required": false
+  },
+  "legacy_gguf_reference": {
+    "manifest_path": "contracts/qwen36-35b-a3b-gguf-q4km-model-contract.json",
+    "model_path": "/home/intel/models/gguf/qwen3.6-35b-a3b-q4_k_m.gguf",
+    "sha256": "d42becf903ed7093d438c0d9f44afc136756b6b8f766121e9066fb888a2dc36e",
+    "promotion_gating": false,
+    "reason": "ADR 0070 changes product arithmetic and accumulated-state semantics to the locked OpenVINO U4 IR; prior GGUF/native evidence remains useful for hardware bounds and rejected-route history"
+  },
+  "decision": "doc/adr/0070-adopt-openvino-u4-specialization-runtime.md"
+}

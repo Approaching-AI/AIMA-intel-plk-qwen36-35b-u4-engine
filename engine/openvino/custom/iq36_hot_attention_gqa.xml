@@ -1,0 +1,1419 @@
+<CustomLayer name="IQ36HotAttentionGQA" type="SimpleGPU" version="1">
+  <Kernel entry="iq36_hot_attention_single_owner">
+    <Source filename="iq36_hot_attention_tiled_helpers.cl"/>
+    <Source filename="iq36_prefill_microkernel_shims.cl"/>
+    <Source filename="iq36_prefill_attention_tiled.cl"/>
+    <Source filename="iq36_hot_attention_single_owner.cl"/>
+  </Kernel>
+  <Buffers>
+    <Tensor arg-index="0" type="input" port-index="0" format="BFYX"/>
+    <Tensor arg-index="1" type="input" port-index="1" format="BFYX"/>
+    <Tensor arg-index="2" type="input" port-index="2" format="BFYX"/>
+    <Tensor arg-index="3" type="input" port-index="3" format="BFYX"/>
+    <Tensor arg-index="4" type="input" port-index="4" format="BFYX"/>
+    <Tensor arg-index="5" type="input" port-index="5" format="BFYX"/>
+    <Tensor arg-index="6" type="input" port-index="6" format="BFYX"/>
+    <Tensor arg-index="7" type="input" port-index="7" format="BFYX"/>
+    <Tensor arg-index="8" type="input" port-index="8" format="BFYX"/>
+    <Tensor arg-index="9" type="input" port-index="9" format="BFYX"/>
+    <Tensor arg-index="10" type="input" port-index="10" format="BFYX"/>
+    <Tensor arg-index="11" type="input" port-index="11" format="BFYX"/>
+    <Tensor arg-index="12" type="input" port-index="12" format="BFYX"/>
+    <Tensor arg-index="13" type="output" port-index="0" format="BFYX"/>
+    <Tensor arg-index="14" type="output" port-index="1" format="BFYX"/>
+    <Tensor arg-index="15" type="output" port-index="2" format="BFYX"/>
+    <Tensor arg-index="16" type="output" port-index="3" format="BFYX"/>
+    <Tensor arg-index="17" type="output" port-index="4" format="BFYX"/>
+    <Tensor arg-index="18" type="output" port-index="5" format="BFYX"/>
+  </Buffers>
+  <CompilerOptions options="-cl-std=CL3.0 -cl-fp32-correctly-rounded-divide-sqrt -Dcl_intel_dot_accumulate -Dcl_intel_global_float_atomic -Dcl_intel_subgroup_matrix_multiply_accumulate -Dcl_intel_subgroup_split_matrix_multiply_accumulate -DIQ36_UNIFIED_SHAPE_SPECIALIZATION=1 -DIQ36_PREFILL_RUNTIME_LENGTH=1 -DIQ36_PREFILL_USE_MICROKERNEL=1"/>
+  <WorkSizes global="128,Y,B*F" local="128,1,1"/>
+</CustomLayer>
+<CustomLayer name="IQ36GreedyTop1Partials" type="SimpleGPU" version="1">
+  <Kernel entry="iq36_greedy_top1_partials">
+    <Source filename="iq36_greedy_top1.cl"/>
+  </Kernel>
+  <Buffers>
+    <Tensor arg-index="0" type="input" port-index="0" format="BFYX"/>
+    <Tensor arg-index="1" type="output" port-index="0" format="BFYX"/>
+  </Buffers>
+  <CompilerOptions options="-cl-std=CL2.0"/>
+  <WorkSizes global="256*X,1,1" local="256,1,1"/>
+</CustomLayer>
+<CustomLayer name="IQ36GreedyTop1Merge" type="SimpleGPU" version="1">
+  <Kernel entry="iq36_greedy_top1_merge">
+    <Source filename="iq36_greedy_top1_merge.cl"/>
+  </Kernel>
+  <Buffers>
+    <Tensor arg-index="0" type="input" port-index="0" format="BFYX"/>
+    <Tensor arg-index="1" type="output" port-index="0" format="BFYX"/>
+  </Buffers>
+  <CompilerOptions options="-cl-std=CL2.0"/>
+  <WorkSizes global="64,1,1" local="64,1,1"/>
+</CustomLayer>
+<CustomLayer name="IQ36GreedyTokenOrLogits" type="SimpleGPU" version="1">
+  <Kernel entry="iq36_greedy_token_or_logits">
+    <Source filename="iq36_greedy_token_or_logits.cl"/>
+  </Kernel>
+  <Buffers>
+    <Tensor arg-index="0" type="input" port-index="0" format="BFYX"/>
+    <Tensor arg-index="1" type="output" port-index="0" format="BFYX"/>
+  </Buffers>
+  <CompilerOptions options="-cl-std=CL2.0"/>
+  <WorkSizes global="256,1,1" local="256,1,1"/>
+</CustomLayer>
+<CustomLayer name="IQ36StockMicroAttentionOracle" type="SimpleGPU" version="1">
+  <Kernel entry="iq36_stock_micro_attention_oracle">
+    <Source filename="iq36_decode_microkernel_shims.cl"/>
+    <Source filename="iq36_stock_micro_attention_oracle.cl"/>
+  </Kernel>
+  <Buffers>
+    <Tensor arg-index="0" type="input" port-index="0" format="BFYX"/>
+    <Tensor arg-index="1" type="input" port-index="1" format="BFYX"/>
+    <Tensor arg-index="2" type="input" port-index="2" format="BFYX"/>
+    <Tensor arg-index="3" type="input" port-index="3" format="BFYX"/>
+    <Tensor arg-index="4" type="input" port-index="4" format="BFYX"/>
+    <Tensor arg-index="5" type="output" port-index="0" format="BFYX"/>
+  </Buffers>
+  <CompilerOptions options="-cl-std=CL3.0 -cl-fp32-correctly-rounded-divide-sqrt -Dcl_intel_dot_accumulate -Dcl_intel_subgroup_matrix_multiply_accumulate -Dcl_intel_subgroup_split_matrix_multiply_accumulate"/>
+  <WorkSizes global="16,16*F/8,B" local="16,16,1"/>
+</CustomLayer>
+<CustomLayer name="IQ36StockMicroOwnerHotAttentionGQA" type="SimpleGPU" version="1">
+  <Kernel entry="iq36_hot_attention_single_owner">
+    <Source filename="iq36_hot_attention_tiled_helpers.cl"/>
+    <Source filename="iq36_prefill_state_update.cl"/>
+    <Source filename="iq36_decode_microkernel_shims.cl"/>
+    <Source filename="iq36_stock_micro_attention_oracle.cl"/>
+  </Kernel>
+  <Buffers>
+    <Tensor arg-index="0" type="input" port-index="0" format="BFYX"/>
+    <Tensor arg-index="1" type="input" port-index="1" format="BFYX"/>
+    <Tensor arg-index="2" type="input" port-index="2" format="BFYX"/>
+    <Tensor arg-index="3" type="input" port-index="3" format="BFYX"/>
+    <Tensor arg-index="4" type="input" port-index="4" format="BFYX"/>
+    <Tensor arg-index="5" type="input" port-index="5" format="BFYX"/>
+    <Tensor arg-index="6" type="input" port-index="6" format="BFYX"/>
+    <Tensor arg-index="7" type="input" port-index="7" format="BFYX"/>
+    <Tensor arg-index="8" type="input" port-index="8" format="BFYX"/>
+    <Tensor arg-index="9" type="input" port-index="9" format="BFYX"/>
+    <Tensor arg-index="10" type="input" port-index="10" format="BFYX"/>
+    <Tensor arg-index="11" type="input" port-index="11" format="BFYX"/>
+    <Tensor arg-index="12" type="input" port-index="12" format="BFYX"/>
+    <Tensor arg-index="13" type="output" port-index="0" format="BFYX"/>
+    <Tensor arg-index="14" type="output" port-index="1" format="BFYX"/>
+    <Tensor arg-index="15" type="output" port-index="2" format="BFYX"/>
+    <Tensor arg-index="16" type="output" port-index="3" format="BFYX"/>
+    <Tensor arg-index="17" type="output" port-index="4" format="BFYX"/>
+    <Tensor arg-index="18" type="output" port-index="5" format="BFYX"/>
+  </Buffers>
+  <CompilerOptions options="-cl-std=CL3.0 -cl-fp32-correctly-rounded-divide-sqrt -Dcl_intel_dot_accumulate -Dcl_intel_subgroup_matrix_multiply_accumulate -Dcl_intel_subgroup_split_matrix_multiply_accumulate -DIQ36_UNIFIED_SHAPE_SPECIALIZATION=1 -DIQ36_STOCK_MICRO_OWNER=1 -DIQ36_STOCK_MICRO_OWNER_WRITE_CURRENT=1"/>
+  <WorkSizes global="128-112*(X-1)/2065,Y+(32-Y)*(X-1)/2065,B*F-(B*F-B)*(X-1)/2065" local="128-112*(X-1)/2065,1+15*(X-1)/2065,1"/>
+</CustomLayer>
+<CustomLayer name="IQ36ExactPhaseHotAttentionGQA" type="SimpleGPU" version="1">
+  <Kernel entry="iq36_hot_attention_single_owner">
+    <Source filename="iq36_hot_attention_tiled_helpers.cl"/>
+    <Source filename="iq36_prefill32split_microkernel_shims.cl"/>
+    <Source filename="iq36_prefill_attention_tiled.cl"/>
+    <Source filename="iq36_decode_microkernel_shims.cl"/>
+    <Source filename="iq36_stock_micro_attention_oracle.cl"/>
+  </Kernel>
+  <Buffers>
+    <Tensor arg-index="0" type="input" port-index="0" format="BFYX"/>
+    <Tensor arg-index="1" type="input" port-index="1" format="BFYX"/>
+    <Tensor arg-index="2" type="input" port-index="2" format="BFYX"/>
+    <Tensor arg-index="3" type="input" port-index="3" format="BFYX"/>
+    <Tensor arg-index="4" type="input" port-index="4" format="BFYX"/>
+    <Tensor arg-index="5" type="input" port-index="5" format="BFYX"/>
+    <Tensor arg-index="6" type="input" port-index="6" format="BFYX"/>
+    <Tensor arg-index="7" type="input" port-index="7" format="BFYX"/>
+    <Tensor arg-index="8" type="input" port-index="8" format="BFYX"/>
+    <Tensor arg-index="9" type="input" port-index="9" format="BFYX"/>
+    <Tensor arg-index="10" type="input" port-index="10" format="BFYX"/>
+    <Tensor arg-index="11" type="input" port-index="11" format="BFYX"/>
+    <Tensor arg-index="12" type="input" port-index="12" format="BFYX"/>
+    <Tensor arg-index="13" type="output" port-index="0" format="BFYX"/>
+    <Tensor arg-index="14" type="output" port-index="1" format="BFYX"/>
+    <Tensor arg-index="15" type="output" port-index="2" format="BFYX"/>
+    <Tensor arg-index="16" type="output" port-index="3" format="BFYX"/>
+    <Tensor arg-index="17" type="output" port-index="4" format="BFYX"/>
+    <Tensor arg-index="18" type="output" port-index="5" format="BFYX"/>
+  </Buffers>
+  <CompilerOptions options="-cl-std=CL3.0 -cl-fp32-correctly-rounded-divide-sqrt -Dcl_intel_dot_accumulate -Dcl_intel_global_float_atomic -Dcl_intel_subgroup_matrix_multiply_accumulate -Dcl_intel_subgroup_split_matrix_multiply_accumulate -DIQ36_UNIFIED_SHAPE_SPECIALIZATION=1 -DIQ36_PREFILL_RUNTIME_LENGTH=1 -DIQ36_PREFILL_USE_MICROKERNEL=1 -DIQ36_PREFILL_LONG_CONTEXT_PREFETCH=1 -DIQ36_STOCK_MICRO_OWNER=1 -DIQ36_STOCK_MICRO_OWNER_WRITE_CURRENT=1"/>
+  <WorkSizes global="256-240*(X-1)/2065,Y+(32-Y)*(X-1)/2065,B*F-(B*F-B)*(X-1)/2065" local="256-240*(X-1)/2065,1+15*(X-1)/2065,1"/>
+</CustomLayer>
+<CustomLayer name="IQ36ExactPhaseDualCohortHotAttentionGQA" type="SimpleGPU" version="1">
+  <Kernel entry="iq36_hot_attention_single_owner">
+    <Source filename="iq36_hot_attention_tiled_helpers.cl"/>
+    <Source filename="iq36_prefill32split_microkernel_shims.cl"/>
+    <Source filename="iq36_prefill_attention_tiled.cl"/>
+    <Source filename="iq36_decode_microkernel_shims.cl"/>
+    <Source filename="iq36_stock_micro_attention_oracle.cl"/>
+  </Kernel>
+  <Buffers>
+    <Tensor arg-index="0" type="input" port-index="0" format="BFYX"/>
+    <Tensor arg-index="1" type="input" port-index="1" format="BFYX"/>
+    <Tensor arg-index="2" type="input" port-index="2" format="BFYX"/>
+    <Tensor arg-index="3" type="input" port-index="3" format="BFYX"/>
+    <Tensor arg-index="4" type="input" port-index="4" format="BFYX"/>
+    <Tensor arg-index="5" type="input" port-index="5" format="BFYX"/>
+    <Tensor arg-index="6" type="input" port-index="6" format="BFYX"/>
+    <Tensor arg-index="7" type="input" port-index="7" format="BFYX"/>
+    <Tensor arg-index="8" type="input" port-index="8" format="BFYX"/>
+    <Tensor arg-index="9" type="input" port-index="9" format="BFYX"/>
+    <Tensor arg-index="10" type="input" port-index="10" format="BFYX"/>
+    <Tensor arg-index="11" type="input" port-index="11" format="BFYX"/>
+    <Tensor arg-index="12" type="input" port-index="12" format="BFYX"/>
+    <Tensor arg-index="13" type="output" port-index="0" format="BFYX"/>
+    <Tensor arg-index="14" type="output" port-index="1" format="BFYX"/>
+    <Tensor arg-index="15" type="output" port-index="2" format="BFYX"/>
+    <Tensor arg-index="16" type="output" port-index="3" format="BFYX"/>
+    <Tensor arg-index="17" type="output" port-index="4" format="BFYX"/>
+    <Tensor arg-index="18" type="output" port-index="5" format="BFYX"/>
+  </Buffers>
+  <CompilerOptions options="-cl-std=CL3.0 -cl-fp32-correctly-rounded-divide-sqrt -Dcl_intel_dot_accumulate -Dcl_intel_global_float_atomic -Dcl_intel_subgroup_matrix_multiply_accumulate -Dcl_intel_subgroup_split_matrix_multiply_accumulate -DIQ36_UNIFIED_SHAPE_SPECIALIZATION=1 -DIQ36_PREFILL_RUNTIME_LENGTH=1 -DIQ36_PREFILL_USE_MICROKERNEL=1 -DIQ36_PREFILL_LONG_CONTEXT_PREFETCH=1 -DIQ36_STOCK_MICRO_OWNER=1 -DIQ36_STOCK_MICRO_OWNER_WRITE_CURRENT=1 -DIQ36_STOCK_MICRO_DUAL_COHORT=1"/>
+  <WorkSizes global="256-240*(X-1)/2065,Y+(64-Y)*(X-1)/2065,B*F-(B*F-B)*(X-1)/2065" local="256-240*(X-1)/2065,1+31*(X-1)/2065,1"/>
+</CustomLayer>
+<CustomLayer name="IQ36ExactPhasePageSparseHotAttentionGQA" type="SimpleGPU" version="1">
+  <Kernel entry="iq36_hot_attention_single_owner">
+    <Source filename="iq36_hot_attention_tiled_helpers.cl"/>
+    <Source filename="iq36_prefill_microkernel_shims.cl"/>
+    <Source filename="iq36_prefill_attention_tiled.cl"/>
+    <Source filename="iq36_decode_microkernel_shims.cl"/>
+    <Source filename="iq36_stock_micro_attention_oracle.cl"/>
+  </Kernel>
+  <Buffers>
+    <Tensor arg-index="0" type="input" port-index="0" format="BFYX"/>
+    <Tensor arg-index="1" type="input" port-index="1" format="BFYX"/>
+    <Tensor arg-index="2" type="input" port-index="2" format="BFYX"/>
+    <Tensor arg-index="3" type="input" port-index="3" format="BFYX"/>
+    <Tensor arg-index="4" type="input" port-index="4" format="BFYX"/>
+    <Tensor arg-index="5" type="input" port-index="5" format="BFYX"/>
+    <Tensor arg-index="6" type="input" port-index="6" format="BFYX"/>
+    <Tensor arg-index="7" type="input" port-index="7" format="BFYX"/>
+    <Tensor arg-index="8" type="input" port-index="8" format="BFYX"/>
+    <Tensor arg-index="9" type="input" port-index="9" format="BFYX"/>
+    <Tensor arg-index="10" type="input" port-index="10" format="BFYX"/>
+    <Tensor arg-index="11" type="input" port-index="11" format="BFYX"/>
+    <Tensor arg-index="12" type="input" port-index="12" format="BFYX"/>
+    <Tensor arg-index="13" type="output" port-index="0" format="BFYX"/>
+    <Tensor arg-index="14" type="output" port-index="1" format="BFYX"/>
+    <Tensor arg-index="15" type="output" port-index="2" format="BFYX"/>
+    <Tensor arg-index="16" type="output" port-index="3" format="BFYX"/>
+    <Tensor arg-index="17" type="output" port-index="4" format="BFYX"/>
+    <Tensor arg-index="18" type="output" port-index="5" format="BFYX"/>
+  </Buffers>
+  <CompilerOptions options="-cl-std=CL3.0 -cl-fp32-correctly-rounded-divide-sqrt -Dcl_intel_dot_accumulate -Dcl_intel_global_float_atomic -Dcl_intel_subgroup_matrix_multiply_accumulate -Dcl_intel_subgroup_split_matrix_multiply_accumulate -DIQ36_UNIFIED_SHAPE_SPECIALIZATION=1 -DIQ36_PREFILL_RUNTIME_LENGTH=1 -DIQ36_PREFILL_USE_MICROKERNEL=1 -DIQ36_STOCK_MICRO_OWNER=1 -DIQ36_STOCK_MICRO_OWNER_WRITE_CURRENT=1 -DIQ36_STOCK_MICRO_PAGE_SPARSE=1"/>
+  <WorkSizes global="128-112*(X-1)/2065,Y+(32-Y)*(X-1)/2065,B*F-(B*F-B)*(X-1)/2065" local="128-112*(X-1)/2065,1+15*(X-1)/2065,1"/>
+</CustomLayer>
+<CustomLayer name="IQ36ExactPhaseContextPartition4HotAttentionGQA" type="SimpleGPU" version="1">
+  <Kernel entry="iq36_hot_attention_single_owner">
+    <Source filename="iq36_hot_attention_tiled_helpers.cl"/>
+    <Source filename="iq36_prefill_microkernel_shims.cl"/>
+    <Source filename="iq36_prefill_attention_tiled.cl"/>
+    <Source filename="iq36_decode_microkernel_shims.cl"/>
+    <Source filename="iq36_stock_micro_attention_oracle.cl"/>
+  </Kernel>
+  <Buffers>
+    <Tensor arg-index="0" type="input" port-index="0" format="BFYX"/>
+    <Tensor arg-index="1" type="input" port-index="1" format="BFYX"/>
+    <Tensor arg-index="2" type="input" port-index="2" format="BFYX"/>
+    <Tensor arg-index="3" type="input" port-index="3" format="BFYX"/>
+    <Tensor arg-index="4" type="input" port-index="4" format="BFYX"/>
+    <Tensor arg-index="5" type="input" port-index="5" format="BFYX"/>
+    <Tensor arg-index="6" type="input" port-index="6" format="BFYX"/>
+    <Tensor arg-index="7" type="input" port-index="7" format="BFYX"/>
+    <Tensor arg-index="8" type="input" port-index="8" format="BFYX"/>
+    <Tensor arg-index="9" type="input" port-index="9" format="BFYX"/>
+    <Tensor arg-index="10" type="input" port-index="10" format="BFYX"/>
+    <Tensor arg-index="11" type="input" port-index="11" format="BFYX"/>
+    <Tensor arg-index="12" type="input" port-index="12" format="BFYX"/>
+    <Tensor arg-index="13" type="output" port-index="0" format="BFYX"/>
+    <Tensor arg-index="14" type="output" port-index="1" format="BFYX"/>
+    <Tensor arg-index="15" type="output" port-index="2" format="BFYX"/>
+    <Tensor arg-index="16" type="output" port-index="3" format="BFYX"/>
+    <Tensor arg-index="17" type="output" port-index="4" format="BFYX"/>
+    <Tensor arg-index="18" type="output" port-index="5" format="BFYX"/>
+  </Buffers>
+  <CompilerOptions options="-cl-std=CL3.0 -cl-fp32-correctly-rounded-divide-sqrt -Dcl_intel_dot_accumulate -Dcl_intel_global_float_atomic -Dcl_intel_subgroup_matrix_multiply_accumulate -Dcl_intel_subgroup_split_matrix_multiply_accumulate -DIQ36_UNIFIED_SHAPE_SPECIALIZATION=1 -DIQ36_PREFILL_RUNTIME_LENGTH=1 -DIQ36_PREFILL_USE_MICROKERNEL=1 -DIQ36_STOCK_MICRO_OWNER=1 -DIQ36_STOCK_MICRO_OWNER_WRITE_CURRENT=1 -DIQ36_STOCK_MICRO_GROUPS_PER_KV=4 -DIQ36_STOCK_MICRO_CONTEXT_PARTITION4=1"/>
+  <WorkSizes global="128-112*(X-1)/2065,Y+(128-Y)*(X-1)/2065,B*F-(B*F-B)*(X-1)/2065" local="128-112*(X-1)/2065,1+15*(X-1)/2065,1"/>
+</CustomLayer>
+<CustomLayer name="IQ36Stock256PartialsHotAttentionGQA" type="SimpleGPU" version="1">
+  <Kernel entry="iq36_hot_attention_single_owner">
+    <Source filename="iq36_hot_attention_tiled_helpers.cl"/>
+    <Source filename="iq36_prefill_microkernel_shims.cl"/>
+    <Source filename="iq36_prefill_attention_tiled.cl"/>
+    <Source filename="iq36_hot_attention_single_owner.cl"/>
+  </Kernel>
+  <Buffers>
+    <Tensor arg-index="0" type="input" port-index="0" format="BFYX"/>
+    <Tensor arg-index="1" type="input" port-index="1" format="BFYX"/>
+    <Tensor arg-index="2" type="input" port-index="2" format="BFYX"/>
+    <Tensor arg-index="3" type="input" port-index="3" format="BFYX"/>
+    <Tensor arg-index="4" type="input" port-index="4" format="BFYX"/>
+    <Tensor arg-index="5" type="input" port-index="5" format="BFYX"/>
+    <Tensor arg-index="6" type="input" port-index="6" format="BFYX"/>
+    <Tensor arg-index="7" type="input" port-index="7" format="BFYX"/>
+    <Tensor arg-index="8" type="input" port-index="8" format="BFYX"/>
+    <Tensor arg-index="9" type="input" port-index="9" format="BFYX"/>
+    <Tensor arg-index="10" type="input" port-index="10" format="BFYX"/>
+    <Tensor arg-index="11" type="input" port-index="11" format="BFYX"/>
+    <Tensor arg-index="12" type="input" port-index="12" format="BFYX"/>
+    <Tensor arg-index="13" type="output" port-index="0" format="BFYX"/>
+    <Tensor arg-index="14" type="output" port-index="1" format="BFYX"/>
+    <Tensor arg-index="15" type="output" port-index="2" format="BFYX"/>
+    <Tensor arg-index="16" type="output" port-index="3" format="BFYX"/>
+    <Tensor arg-index="17" type="output" port-index="4" format="BFYX"/>
+    <Tensor arg-index="18" type="output" port-index="5" format="BFYX"/>
+  </Buffers>
+  <CompilerOptions options="-cl-std=CL3.0 -cl-fp32-correctly-rounded-divide-sqrt -Dcl_intel_dot_accumulate -Dcl_intel_global_float_atomic -Dcl_intel_subgroup_matrix_multiply_accumulate -Dcl_intel_subgroup_split_matrix_multiply_accumulate -DIQ36_UNIFIED_SHAPE_SPECIALIZATION=1 -DIQ36_PREFILL_RUNTIME_LENGTH=1 -DIQ36_PREFILL_USE_MICROKERNEL=1 -DIQ36_STOCK256_PARTIALS=1"/>
+  <WorkSizes global="128,Y,B*F" local="128,1,1"/>
+</CustomLayer>
+<CustomLayer name="IQ36Dual256HotAttentionGQA" type="SimpleGPU" version="1">
+  <Kernel entry="iq36_hot_attention_single_owner">
+    <Source filename="iq36_hot_attention_tiled_helpers.cl"/>
+    <Source filename="iq36_prefill_microkernel_shims.cl"/>
+    <Source filename="iq36_prefill_attention_tiled.cl"/>
+    <Source filename="iq36_hot_attention_single_owner.cl"/>
+  </Kernel>
+  <Buffers>
+    <Tensor arg-index="0" type="input" port-index="0" format="BFYX"/>
+    <Tensor arg-index="1" type="input" port-index="1" format="BFYX"/>
+    <Tensor arg-index="2" type="input" port-index="2" format="BFYX"/>
+    <Tensor arg-index="3" type="input" port-index="3" format="BFYX"/>
+    <Tensor arg-index="4" type="input" port-index="4" format="BFYX"/>
+    <Tensor arg-index="5" type="input" port-index="5" format="BFYX"/>
+    <Tensor arg-index="6" type="input" port-index="6" format="BFYX"/>
+    <Tensor arg-index="7" type="input" port-index="7" format="BFYX"/>
+    <Tensor arg-index="8" type="input" port-index="8" format="BFYX"/>
+    <Tensor arg-index="9" type="input" port-index="9" format="BFYX"/>
+    <Tensor arg-index="10" type="input" port-index="10" format="BFYX"/>
+    <Tensor arg-index="11" type="input" port-index="11" format="BFYX"/>
+    <Tensor arg-index="12" type="input" port-index="12" format="BFYX"/>
+    <Tensor arg-index="13" type="output" port-index="0" format="BFYX"/>
+    <Tensor arg-index="14" type="output" port-index="1" format="BFYX"/>
+    <Tensor arg-index="15" type="output" port-index="2" format="BFYX"/>
+    <Tensor arg-index="16" type="output" port-index="3" format="BFYX"/>
+    <Tensor arg-index="17" type="output" port-index="4" format="BFYX"/>
+    <Tensor arg-index="18" type="output" port-index="5" format="BFYX"/>
+  </Buffers>
+  <CompilerOptions options="-cl-std=CL3.0 -cl-fp32-correctly-rounded-divide-sqrt -Dcl_intel_dot_accumulate -Dcl_intel_global_float_atomic -Dcl_intel_subgroup_matrix_multiply_accumulate -Dcl_intel_subgroup_split_matrix_multiply_accumulate -DIQ36_UNIFIED_SHAPE_SPECIALIZATION=1 -DIQ36_PREFILL_RUNTIME_LENGTH=1 -DIQ36_PREFILL_USE_MICROKERNEL=1 -DIQ36_DUAL256_REDUCTION=1"/>
+  <WorkSizes global="128,Y,B*F" local="128,1,1"/>
+</CustomLayer>
+<CustomLayer name="IQ36DecodeChunk256HotAttentionGQA" type="SimpleGPU" version="1">
+  <Kernel entry="iq36_hot_attention_single_owner">
+    <Source filename="iq36_hot_attention_tiled_helpers.cl"/>
+    <Source filename="iq36_prefill_microkernel_shims.cl"/>
+    <Source filename="iq36_prefill_attention_tiled.cl"/>
+    <Source filename="iq36_hot_attention_single_owner.cl"/>
+  </Kernel>
+  <Buffers>
+    <Tensor arg-index="0" type="input" port-index="0" format="BFYX"/>
+    <Tensor arg-index="1" type="input" port-index="1" format="BFYX"/>
+    <Tensor arg-index="2" type="input" port-index="2" format="BFYX"/>
+    <Tensor arg-index="3" type="input" port-index="3" format="BFYX"/>
+    <Tensor arg-index="4" type="input" port-index="4" format="BFYX"/>
+    <Tensor arg-index="5" type="input" port-index="5" format="BFYX"/>
+    <Tensor arg-index="6" type="input" port-index="6" format="BFYX"/>
+    <Tensor arg-index="7" type="input" port-index="7" format="BFYX"/>
+    <Tensor arg-index="8" type="input" port-index="8" format="BFYX"/>
+    <Tensor arg-index="9" type="input" port-index="9" format="BFYX"/>
+    <Tensor arg-index="10" type="input" port-index="10" format="BFYX"/>
+    <Tensor arg-index="11" type="input" port-index="11" format="BFYX"/>
+    <Tensor arg-index="12" type="input" port-index="12" format="BFYX"/>
+    <Tensor arg-index="13" type="output" port-index="0" format="BFYX"/>
+    <Tensor arg-index="14" type="output" port-index="1" format="BFYX"/>
+    <Tensor arg-index="15" type="output" port-index="2" format="BFYX"/>
+    <Tensor arg-index="16" type="output" port-index="3" format="BFYX"/>
+    <Tensor arg-index="17" type="output" port-index="4" format="BFYX"/>
+    <Tensor arg-index="18" type="output" port-index="5" format="BFYX"/>
+  </Buffers>
+  <CompilerOptions options="-cl-std=CL3.0 -cl-fp32-correctly-rounded-divide-sqrt -Dcl_intel_dot_accumulate -Dcl_intel_global_float_atomic -Dcl_intel_subgroup_matrix_multiply_accumulate -Dcl_intel_subgroup_split_matrix_multiply_accumulate -DIQ36_UNIFIED_SHAPE_SPECIALIZATION=1 -DIQ36_PREFILL_RUNTIME_LENGTH=1 -DIQ36_PREFILL_USE_MICROKERNEL=1 -DIQ36_CHUNK_TOKENS=256"/>
+  <WorkSizes global="128,Y,B*F" local="128,1,1"/>
+</CustomLayer>
+<CustomLayer name="IQ36F32NumeratorChunk256HotAttentionGQA" type="SimpleGPU" version="1">
+  <Kernel entry="iq36_hot_attention_single_owner">
+    <Source filename="iq36_hot_attention_tiled_helpers.cl"/>
+    <Source filename="iq36_prefill_microkernel_shims.cl"/>
+    <Source filename="iq36_prefill_attention_tiled.cl"/>
+    <Source filename="iq36_hot_attention_single_owner.cl"/>
+  </Kernel>
+  <Buffers>
+    <Tensor arg-index="0" type="input" port-index="0" format="BFYX"/>
+    <Tensor arg-index="1" type="input" port-index="1" format="BFYX"/>
+    <Tensor arg-index="2" type="input" port-index="2" format="BFYX"/>
+    <Tensor arg-index="3" type="input" port-index="3" format="BFYX"/>
+    <Tensor arg-index="4" type="input" port-index="4" format="BFYX"/>
+    <Tensor arg-index="5" type="input" port-index="5" format="BFYX"/>
+    <Tensor arg-index="6" type="input" port-index="6" format="BFYX"/>
+    <Tensor arg-index="7" type="input" port-index="7" format="BFYX"/>
+    <Tensor arg-index="8" type="input" port-index="8" format="BFYX"/>
+    <Tensor arg-index="9" type="input" port-index="9" format="BFYX"/>
+    <Tensor arg-index="10" type="input" port-index="10" format="BFYX"/>
+    <Tensor arg-index="11" type="input" port-index="11" format="BFYX"/>
+    <Tensor arg-index="12" type="input" port-index="12" format="BFYX"/>
+    <Tensor arg-index="13" type="output" port-index="0" format="BFYX"/>
+    <Tensor arg-index="14" type="output" port-index="1" format="BFYX"/>
+    <Tensor arg-index="15" type="output" port-index="2" format="BFYX"/>
+    <Tensor arg-index="16" type="output" port-index="3" format="BFYX"/>
+    <Tensor arg-index="17" type="output" port-index="4" format="BFYX"/>
+    <Tensor arg-index="18" type="output" port-index="5" format="BFYX"/>
+  </Buffers>
+  <CompilerOptions options="-cl-std=CL3.0 -cl-fp32-correctly-rounded-divide-sqrt -Dcl_intel_dot_accumulate -Dcl_intel_global_float_atomic -Dcl_intel_subgroup_matrix_multiply_accumulate -Dcl_intel_subgroup_split_matrix_multiply_accumulate -DIQ36_UNIFIED_SHAPE_SPECIALIZATION=1 -DIQ36_PREFILL_RUNTIME_LENGTH=1 -DIQ36_PREFILL_USE_MICROKERNEL=1 -DIQ36_CHUNK_TOKENS=256 -DIQ36_F32_NUMERATOR=1"/>
+  <WorkSizes global="128,Y,B*F" local="128,1,1"/>
+</CustomLayer>
+<CustomLayer name="IQ36StockScoreChunk256HotAttentionGQA" type="SimpleGPU" version="1">
+  <Kernel entry="iq36_hot_attention_single_owner">
+    <Source filename="iq36_hot_attention_tiled_helpers.cl"/>
+    <Source filename="iq36_prefill_microkernel_shims.cl"/>
+    <Source filename="iq36_prefill_attention_tiled.cl"/>
+    <Source filename="iq36_hot_attention_single_owner.cl"/>
+  </Kernel>
+  <Buffers>
+    <Tensor arg-index="0" type="input" port-index="0" format="BFYX"/>
+    <Tensor arg-index="1" type="input" port-index="1" format="BFYX"/>
+    <Tensor arg-index="2" type="input" port-index="2" format="BFYX"/>
+    <Tensor arg-index="3" type="input" port-index="3" format="BFYX"/>
+    <Tensor arg-index="4" type="input" port-index="4" format="BFYX"/>
+    <Tensor arg-index="5" type="input" port-index="5" format="BFYX"/>
+    <Tensor arg-index="6" type="input" port-index="6" format="BFYX"/>
+    <Tensor arg-index="7" type="input" port-index="7" format="BFYX"/>
+    <Tensor arg-index="8" type="input" port-index="8" format="BFYX"/>
+    <Tensor arg-index="9" type="input" port-index="9" format="BFYX"/>
+    <Tensor arg-index="10" type="input" port-index="10" format="BFYX"/>
+    <Tensor arg-index="11" type="input" port-index="11" format="BFYX"/>
+    <Tensor arg-index="12" type="input" port-index="12" format="BFYX"/>
+    <Tensor arg-index="13" type="output" port-index="0" format="BFYX"/>
+    <Tensor arg-index="14" type="output" port-index="1" format="BFYX"/>
+    <Tensor arg-index="15" type="output" port-index="2" format="BFYX"/>
+    <Tensor arg-index="16" type="output" port-index="3" format="BFYX"/>
+    <Tensor arg-index="17" type="output" port-index="4" format="BFYX"/>
+    <Tensor arg-index="18" type="output" port-index="5" format="BFYX"/>
+  </Buffers>
+  <CompilerOptions options="-cl-std=CL3.0 -cl-fp32-correctly-rounded-divide-sqrt -Dcl_intel_dot_accumulate -Dcl_intel_global_float_atomic -Dcl_intel_subgroup_matrix_multiply_accumulate -Dcl_intel_subgroup_split_matrix_multiply_accumulate -DIQ36_UNIFIED_SHAPE_SPECIALIZATION=1 -DIQ36_PREFILL_RUNTIME_LENGTH=1 -DIQ36_PREFILL_USE_MICROKERNEL=1 -DIQ36_CHUNK_TOKENS=256 -DIQ36_STOCK_SCORE_ORDER=1"/>
+  <WorkSizes global="128,Y,B*F" local="128,1,1"/>
+</CustomLayer>
+<CustomLayer name="IQ36StockPartitionChunk256HotAttentionGQA" type="SimpleGPU" version="1">
+  <Kernel entry="iq36_hot_attention_single_owner">
+    <Source filename="iq36_hot_attention_tiled_helpers.cl"/>
+    <Source filename="iq36_prefill_microkernel_shims.cl"/>
+    <Source filename="iq36_prefill_attention_tiled.cl"/>
+    <Source filename="iq36_hot_attention_single_owner.cl"/>
+  </Kernel>
+  <Buffers>
+    <Tensor arg-index="0" type="input" port-index="0" format="BFYX"/>
+    <Tensor arg-index="1" type="input" port-index="1" format="BFYX"/>
+    <Tensor arg-index="2" type="input" port-index="2" format="BFYX"/>
+    <Tensor arg-index="3" type="input" port-index="3" format="BFYX"/>
+    <Tensor arg-index="4" type="input" port-index="4" format="BFYX"/>
+    <Tensor arg-index="5" type="input" port-index="5" format="BFYX"/>
+    <Tensor arg-index="6" type="input" port-index="6" format="BFYX"/>
+    <Tensor arg-index="7" type="input" port-index="7" format="BFYX"/>
+    <Tensor arg-index="8" type="input" port-index="8" format="BFYX"/>
+    <Tensor arg-index="9" type="input" port-index="9" format="BFYX"/>
+    <Tensor arg-index="10" type="input" port-index="10" format="BFYX"/>
+    <Tensor arg-index="11" type="input" port-index="11" format="BFYX"/>
+    <Tensor arg-index="12" type="input" port-index="12" format="BFYX"/>
+    <Tensor arg-index="13" type="output" port-index="0" format="BFYX"/>
+    <Tensor arg-index="14" type="output" port-index="1" format="BFYX"/>
+    <Tensor arg-index="15" type="output" port-index="2" format="BFYX"/>
+    <Tensor arg-index="16" type="output" port-index="3" format="BFYX"/>
+    <Tensor arg-index="17" type="output" port-index="4" format="BFYX"/>
+    <Tensor arg-index="18" type="output" port-index="5" format="BFYX"/>
+  </Buffers>
+  <CompilerOptions options="-cl-std=CL3.0 -cl-fp32-correctly-rounded-divide-sqrt -Dcl_intel_dot_accumulate -Dcl_intel_global_float_atomic -Dcl_intel_subgroup_matrix_multiply_accumulate -Dcl_intel_subgroup_split_matrix_multiply_accumulate -DIQ36_UNIFIED_SHAPE_SPECIALIZATION=1 -DIQ36_PREFILL_RUNTIME_LENGTH=1 -DIQ36_PREFILL_USE_MICROKERNEL=1 -DIQ36_CHUNK_TOKENS=256 -DIQ36_STOCK_SCORE_ORDER=1 -DIQ36_STOCK_PARTITION_ARITHMETIC=1"/>
+  <WorkSizes global="128,Y,B*F" local="128,1,1"/>
+</CustomLayer>
+<CustomLayer name="IQ36TokenMajorValueAttentionGQA" type="SimpleGPU" version="1">
+  <Kernel entry="iq36_hot_attention_single_owner">
+    <Source filename="iq36_hot_attention_tiled_helpers.cl"/>
+    <Source filename="iq36_prefill_microkernel_shims.cl"/>
+    <Source filename="iq36_prefill_attention_tiled.cl"/>
+    <Source filename="iq36_hot_attention_single_owner.cl"/>
+  </Kernel>
+  <Buffers>
+    <Tensor arg-index="0" type="input" port-index="0" format="BFYX"/>
+    <Tensor arg-index="1" type="input" port-index="1" format="BFYX"/>
+    <Tensor arg-index="2" type="input" port-index="2" format="BFYX"/>
+    <Tensor arg-index="3" type="input" port-index="3" format="BFYX"/>
+    <Tensor arg-index="4" type="input" port-index="4" format="BFYX"/>
+    <Tensor arg-index="5" type="input" port-index="5" format="BFYX"/>
+    <Tensor arg-index="6" type="input" port-index="6" format="BFYX"/>
+    <Tensor arg-index="7" type="input" port-index="7" format="BFYX"/>
+    <Tensor arg-index="8" type="input" port-index="8" format="BFYX"/>
+    <Tensor arg-index="9" type="input" port-index="9" format="BFYX"/>
+    <Tensor arg-index="10" type="input" port-index="10" format="BFYX"/>
+    <Tensor arg-index="11" type="input" port-index="11" format="BFYX"/>
+    <Tensor arg-index="12" type="input" port-index="12" format="BFYX"/>
+    <Tensor arg-index="13" type="output" port-index="0" format="BFYX"/>
+    <Tensor arg-index="14" type="output" port-index="1" format="BFYX"/>
+    <Tensor arg-index="15" type="output" port-index="2" format="BFYX"/>
+    <Tensor arg-index="16" type="output" port-index="3" format="BFYX"/>
+    <Tensor arg-index="17" type="output" port-index="4" format="BFYX"/>
+    <Tensor arg-index="18" type="output" port-index="5" format="BFYX"/>
+  </Buffers>
+  <CompilerOptions options="-cl-std=CL3.0 -cl-fp32-correctly-rounded-divide-sqrt -Dcl_intel_dot_accumulate -Dcl_intel_global_float_atomic -Dcl_intel_subgroup_matrix_multiply_accumulate -Dcl_intel_subgroup_split_matrix_multiply_accumulate -DIQ36_UNIFIED_SHAPE_SPECIALIZATION=1 -DIQ36_PREFILL_RUNTIME_LENGTH=1 -DIQ36_PREFILL_USE_MICROKERNEL=1 -DIQ36_TOKEN_MAJOR_VALUE_OUTPUT=1"/>
+  <WorkSizes global="128,Y,B*F" local="128,1,1"/>
+</CustomLayer>
+<CustomLayer name="IQ36GatedTransposeDynamicQuantize" type="SimpleGPU" version="1">
+  <Kernel entry="iq36_attention_gated_dynamic_quantize">
+    <Source filename="iq36_attention_gated_dynamic_quantize.cl"/>
+  </Kernel>
+  <Buffers>
+    <Tensor arg-index="0" type="input" port-index="0" format="BFYX"/>
+    <Tensor arg-index="1" type="input" port-index="1" format="BFYX"/>
+    <Tensor arg-index="2" type="output" port-index="0" format="BFYX"/>
+    <Tensor arg-index="3" type="output" port-index="1" format="BFYX"/>
+    <Tensor arg-index="4" type="output" port-index="2" format="BFYX"/>
+    <Tensor arg-index="5" type="output" port-index="3" format="BFYX"/>
+  </Buffers>
+  <CompilerOptions options="-cl-std=CL3.0"/>
+  <WorkSizes global="16,Y/64,B*F" local="16,1,1"/>
+</CustomLayer>
+<CustomLayer name="IQ36QKRopeLayout" type="SimpleGPU" version="1">
+  <Kernel entry="iq36_qk_rope_layout">
+    <Source filename="iq36_qk_rope_layout.cl"/>
+  </Kernel>
+  <Buffers>
+    <Tensor arg-index="0" type="input" port-index="0" format="BFYX"/>
+    <Tensor arg-index="1" type="input" port-index="1" format="BFYX"/>
+    <Tensor arg-index="2" type="input" port-index="2" format="BFYX"/>
+    <Tensor arg-index="3" type="input" port-index="3" format="BFYX"/>
+    <Tensor arg-index="4" type="output" port-index="0" format="BFYX"/>
+    <Tensor arg-index="5" type="output" port-index="1" format="BFYX"/>
+  </Buffers>
+  <CompilerOptions options="-cl-std=CL3.0"/>
+  <WorkSizes global="X,Y,B*F" local="16,1,1"/>
+</CustomLayer>
+<CustomLayer name="IQ36GatedHotAttentionGQA" type="SimpleGPU" version="1">
+  <Kernel entry="iq36_hot_attention_single_owner">
+    <Source filename="iq36_hot_attention_tiled_helpers.cl"/>
+    <Source filename="iq36_prefill_microkernel_shims.cl"/>
+    <Source filename="iq36_prefill_attention_tiled.cl"/>
+    <Source filename="iq36_hot_attention_single_owner.cl"/>
+  </Kernel>
+  <Buffers>
+    <Tensor arg-index="0" type="input" port-index="0" format="BFYX"/>
+    <Tensor arg-index="1" type="input" port-index="1" format="BFYX"/>
+    <Tensor arg-index="2" type="input" port-index="2" format="BFYX"/>
+    <Tensor arg-index="3" type="input" port-index="3" format="BFYX"/>
+    <Tensor arg-index="4" type="input" port-index="4" format="BFYX"/>
+    <Tensor arg-index="5" type="input" port-index="5" format="BFYX"/>
+    <Tensor arg-index="6" type="input" port-index="6" format="BFYX"/>
+    <Tensor arg-index="7" type="input" port-index="7" format="BFYX"/>
+    <Tensor arg-index="8" type="input" port-index="8" format="BFYX"/>
+    <Tensor arg-index="9" type="input" port-index="9" format="BFYX"/>
+    <Tensor arg-index="10" type="input" port-index="10" format="BFYX"/>
+    <Tensor arg-index="11" type="input" port-index="11" format="BFYX"/>
+    <Tensor arg-index="12" type="input" port-index="12" format="BFYX"/>
+    <Tensor arg-index="13" type="input" port-index="13" format="BFYX"/>
+    <Tensor arg-index="14" type="output" port-index="0" format="BFYX"/>
+    <Tensor arg-index="15" type="output" port-index="1" format="BFYX"/>
+    <Tensor arg-index="16" type="output" port-index="2" format="BFYX"/>
+    <Tensor arg-index="17" type="output" port-index="3" format="BFYX"/>
+    <Tensor arg-index="18" type="output" port-index="4" format="BFYX"/>
+    <Tensor arg-index="19" type="output" port-index="5" format="BFYX"/>
+  </Buffers>
+  <CompilerOptions options="-cl-std=CL3.0 -cl-fp32-correctly-rounded-divide-sqrt -Dcl_intel_dot_accumulate -Dcl_intel_global_float_atomic -Dcl_intel_subgroup_matrix_multiply_accumulate -Dcl_intel_subgroup_split_matrix_multiply_accumulate -DIQ36_UNIFIED_SHAPE_SPECIALIZATION=1 -DIQ36_PREFILL_RUNTIME_LENGTH=1 -DIQ36_PREFILL_USE_MICROKERNEL=1 -DIQ36_FUSED_GATE_OUTPUT=1"/>
+  <WorkSizes global="128,Y,B*F" local="128,1,1"/>
+</CustomLayer>
+<CustomLayer name="IQ36DirectI8HotAttentionGQA" type="SimpleGPU" version="1">
+  <Kernel entry="iq36_hot_attention_single_owner">
+    <Source filename="iq36_hot_attention_tiled_helpers.cl"/>
+    <Source filename="iq36_prefill_microkernel_shims.cl"/>
+    <Source filename="iq36_prefill_attention_tiled.cl"/>
+    <Source filename="iq36_hot_attention_single_owner.cl"/>
+  </Kernel>
+  <Buffers>
+    <Tensor arg-index="0" type="input" port-index="0" format="BFYX"/>
+    <Tensor arg-index="1" type="input" port-index="1" format="BFYX"/>
+    <Tensor arg-index="2" type="input" port-index="2" format="BFYX"/>
+    <Tensor arg-index="3" type="input" port-index="3" format="BFYX"/>
+    <Tensor arg-index="4" type="input" port-index="4" format="BFYX"/>
+    <Tensor arg-index="5" type="input" port-index="5" format="BFYX"/>
+    <Tensor arg-index="6" type="input" port-index="6" format="BFYX"/>
+    <Tensor arg-index="7" type="input" port-index="7" format="BFYX"/>
+    <Tensor arg-index="8" type="input" port-index="8" format="BFYX"/>
+    <Tensor arg-index="9" type="input" port-index="9" format="BFYX"/>
+    <Tensor arg-index="10" type="input" port-index="10" format="BFYX"/>
+    <Tensor arg-index="11" type="input" port-index="11" format="BFYX"/>
+    <Tensor arg-index="12" type="input" port-index="12" format="BFYX"/>
+    <Tensor arg-index="13" type="output" port-index="0" format="BFYX"/>
+    <Tensor arg-index="14" type="output" port-index="1" format="BFYX"/>
+    <Tensor arg-index="15" type="output" port-index="2" format="BFYX"/>
+    <Tensor arg-index="16" type="output" port-index="3" format="BFYX"/>
+    <Tensor arg-index="17" type="output" port-index="4" format="BFYX"/>
+    <Tensor arg-index="18" type="output" port-index="5" format="BFYX"/>
+  </Buffers>
+  <CompilerOptions options="-cl-std=CL3.0 -cl-fp32-correctly-rounded-divide-sqrt -Dcl_intel_dot_accumulate -Dcl_intel_global_float_atomic -Dcl_intel_subgroup_matrix_multiply_accumulate -Dcl_intel_subgroup_split_matrix_multiply_accumulate -DIQ36_UNIFIED_SHAPE_SPECIALIZATION=1 -DIQ36_PREFILL_RUNTIME_LENGTH=1 -DIQ36_DIRECT_I8_FIXED_LAYOUT=1"/>
+  <WorkSizes global="128,Y,B*F" local="128,1,1"/>
+</CustomLayer>
+<CustomLayer name="IQ36AdaptiveTop2048HotAttentionGQA" type="SimpleGPU" version="1">
+  <Kernel entry="iq36_adaptive_attention">
+    <Source filename="iq36_hot_attention_tiled_helpers.cl"/>
+    <Source filename="iq36_prefill_microkernel_shims.cl"/>
+    <Source filename="iq36_prefill_attention_tiled.cl"/>
+    <Source filename="iq36_hot_attention_single_owner.cl"/>
+    <Source filename="iq36_adaptive_attention_decode.cl"/>
+  </Kernel>
+  <Buffers>
+    <Tensor arg-index="0" type="input" port-index="0" format="BFYX"/>
+    <Tensor arg-index="1" type="input" port-index="1" format="BFYX"/>
+    <Tensor arg-index="2" type="input" port-index="2" format="BFYX"/>
+    <Tensor arg-index="3" type="input" port-index="3" format="BFYX"/>
+    <Tensor arg-index="4" type="input" port-index="4" format="BFYX"/>
+    <Tensor arg-index="5" type="input" port-index="5" format="BFYX"/>
+    <Tensor arg-index="6" type="input" port-index="6" format="BFYX"/>
+    <Tensor arg-index="7" type="input" port-index="7" format="BFYX"/>
+    <Tensor arg-index="8" type="input" port-index="8" format="BFYX"/>
+    <Tensor arg-index="9" type="input" port-index="9" format="BFYX"/>
+    <Tensor arg-index="10" type="input" port-index="10" format="BFYX"/>
+    <Tensor arg-index="11" type="input" port-index="11" format="BFYX"/>
+    <Tensor arg-index="12" type="input" port-index="12" format="BFYX"/>
+    <Tensor arg-index="13" type="output" port-index="0" format="BFYX"/>
+    <Tensor arg-index="14" type="output" port-index="1" format="BFYX"/>
+    <Tensor arg-index="15" type="output" port-index="2" format="BFYX"/>
+    <Tensor arg-index="16" type="output" port-index="3" format="BFYX"/>
+    <Tensor arg-index="17" type="output" port-index="4" format="BFYX"/>
+    <Tensor arg-index="18" type="output" port-index="5" format="BFYX"/>
+  </Buffers>
+  <CompilerOptions options="-cl-std=CL3.0 -cl-fp32-correctly-rounded-divide-sqrt -Dcl_intel_dot_accumulate -Dcl_intel_global_float_atomic -Dcl_intel_subgroup_matrix_multiply_accumulate -Dcl_intel_subgroup_split_matrix_multiply_accumulate -DIQ36_UNIFIED_SHAPE_SPECIALIZATION=1 -DIQ36_PREFILL_RUNTIME_LENGTH=1 -DIQ36_PREFILL_FULL_HISTORY=1 -DIQ36_PREFILL_USE_MICROKERNEL=1 -DIQ36_DIRECT_I8_FIXED_LAYOUT=1 -DIQ36_HOT_WINDOW=16384U -DIQ36_DIMENSION_MAJOR_VALUE_PLANE=1 -DIQ36_ADAPTIVE_ATTENTION_GRAPH=1 -DIQ36_ADAPTIVE_TOPK=2048U"/>
+  <WorkSizes global="128,Y,B*F" local="128,1,1"/>
+</CustomLayer>
+<CustomLayer name="IQ36AdaptiveTop1024HotAttentionGQA" type="SimpleGPU" version="1">
+  <Kernel entry="iq36_adaptive_attention">
+    <Source filename="iq36_hot_attention_tiled_helpers.cl"/>
+    <Source filename="iq36_prefill_microkernel_shims.cl"/>
+    <Source filename="iq36_prefill_attention_tiled.cl"/>
+    <Source filename="iq36_hot_attention_single_owner.cl"/>
+    <Source filename="iq36_adaptive_attention_decode.cl"/>
+  </Kernel>
+  <Buffers>
+    <Tensor arg-index="0" type="input" port-index="0" format="BFYX"/>
+    <Tensor arg-index="1" type="input" port-index="1" format="BFYX"/>
+    <Tensor arg-index="2" type="input" port-index="2" format="BFYX"/>
+    <Tensor arg-index="3" type="input" port-index="3" format="BFYX"/>
+    <Tensor arg-index="4" type="input" port-index="4" format="BFYX"/>
+    <Tensor arg-index="5" type="input" port-index="5" format="BFYX"/>
+    <Tensor arg-index="6" type="input" port-index="6" format="BFYX"/>
+    <Tensor arg-index="7" type="input" port-index="7" format="BFYX"/>
+    <Tensor arg-index="8" type="input" port-index="8" format="BFYX"/>
+    <Tensor arg-index="9" type="input" port-index="9" format="BFYX"/>
+    <Tensor arg-index="10" type="input" port-index="10" format="BFYX"/>
+    <Tensor arg-index="11" type="input" port-index="11" format="BFYX"/>
+    <Tensor arg-index="12" type="input" port-index="12" format="BFYX"/>
+    <Tensor arg-index="13" type="output" port-index="0" format="BFYX"/>
+    <Tensor arg-index="14" type="output" port-index="1" format="BFYX"/>
+    <Tensor arg-index="15" type="output" port-index="2" format="BFYX"/>
+    <Tensor arg-index="16" type="output" port-index="3" format="BFYX"/>
+    <Tensor arg-index="17" type="output" port-index="4" format="BFYX"/>
+    <Tensor arg-index="18" type="output" port-index="5" format="BFYX"/>
+  </Buffers>
+  <CompilerOptions options="-cl-std=CL3.0 -cl-fp32-correctly-rounded-divide-sqrt -Dcl_intel_dot_accumulate -Dcl_intel_global_float_atomic -Dcl_intel_subgroup_matrix_multiply_accumulate -Dcl_intel_subgroup_split_matrix_multiply_accumulate -DIQ36_UNIFIED_SHAPE_SPECIALIZATION=1 -DIQ36_PREFILL_RUNTIME_LENGTH=1 -DIQ36_PREFILL_FULL_HISTORY=1 -DIQ36_PREFILL_USE_MICROKERNEL=1 -DIQ36_DIRECT_I8_FIXED_LAYOUT=1 -DIQ36_HOT_WINDOW=16384U -DIQ36_DIMENSION_MAJOR_VALUE_PLANE=1 -DIQ36_ADAPTIVE_ATTENTION_GRAPH=1 -DIQ36_ADAPTIVE_TOPK=1024U"/>
+  <WorkSizes global="128,Y,B*F" local="128,1,1"/>
+</CustomLayer>
+<CustomLayer name="IQ36AdaptiveV16Top512HotAttentionGQA" type="SimpleGPU" version="1">
+  <Kernel entry="iq36_adaptive_attention">
+    <Source filename="iq36_hot_attention_tiled_helpers.cl"/>
+    <Source filename="iq36_prefill_microkernel_shims.cl"/>
+    <Source filename="iq36_prefill_attention_tiled.cl"/>
+    <Source filename="iq36_hot_attention_single_owner.cl"/>
+    <Source filename="iq36_adaptive_attention_decode.cl"/>
+  </Kernel>
+  <Buffers>
+    <Tensor arg-index="0" type="input" port-index="0" format="BFYX"/>
+    <Tensor arg-index="1" type="input" port-index="1" format="BFYX"/>
+    <Tensor arg-index="2" type="input" port-index="2" format="BFYX"/>
+    <Tensor arg-index="3" type="input" port-index="3" format="BFYX"/>
+    <Tensor arg-index="4" type="input" port-index="4" format="BFYX"/>
+    <Tensor arg-index="5" type="input" port-index="5" format="BFYX"/>
+    <Tensor arg-index="6" type="input" port-index="6" format="BFYX"/>
+    <Tensor arg-index="7" type="input" port-index="7" format="BFYX"/>
+    <Tensor arg-index="8" type="input" port-index="8" format="BFYX"/>
+    <Tensor arg-index="9" type="input" port-index="9" format="BFYX"/>
+    <Tensor arg-index="10" type="input" port-index="10" format="BFYX"/>
+    <Tensor arg-index="11" type="input" port-index="11" format="BFYX"/>
+    <Tensor arg-index="12" type="input" port-index="12" format="BFYX"/>
+    <Tensor arg-index="13" type="output" port-index="0" format="BFYX"/>
+    <Tensor arg-index="14" type="output" port-index="1" format="BFYX"/>
+    <Tensor arg-index="15" type="output" port-index="2" format="BFYX"/>
+    <Tensor arg-index="16" type="output" port-index="3" format="BFYX"/>
+    <Tensor arg-index="17" type="output" port-index="4" format="BFYX"/>
+    <Tensor arg-index="18" type="output" port-index="5" format="BFYX"/>
+  </Buffers>
+  <CompilerOptions options="-cl-std=CL3.0 -cl-fp32-correctly-rounded-divide-sqrt -Dcl_intel_dot_accumulate -Dcl_intel_global_float_atomic -Dcl_intel_subgroup_matrix_multiply_accumulate -Dcl_intel_subgroup_split_matrix_multiply_accumulate -DIQ36_UNIFIED_SHAPE_SPECIALIZATION=1 -DIQ36_PREFILL_RUNTIME_LENGTH=1 -DIQ36_PREFILL_FULL_HISTORY=1 -DIQ36_PREFILL_USE_MICROKERNEL=1 -DIQ36_DIRECT_I8_FIXED_LAYOUT=1 -DIQ36_DIRECT_I8_VALUE16=1 -DIQ36_HOT_WINDOW=16384U -DIQ36_DIMENSION_MAJOR_VALUE_PLANE=1 -DIQ36_ADAPTIVE_ATTENTION_GRAPH=1 -DIQ36_ADAPTIVE_TOPK=512U"/>
+  <WorkSizes global="128,Y,B*F" local="128,1,1"/>
+</CustomLayer>
+<CustomLayer name="IQ36AdaptiveTop512HotAttentionGQA" type="SimpleGPU" version="1">
+  <Kernel entry="iq36_adaptive_attention">
+    <Source filename="iq36_hot_attention_tiled_helpers.cl"/>
+    <Source filename="iq36_prefill_microkernel_shims.cl"/>
+    <Source filename="iq36_prefill_attention_tiled.cl"/>
+    <Source filename="iq36_hot_attention_single_owner.cl"/>
+    <Source filename="iq36_adaptive_attention_decode.cl"/>
+  </Kernel>
+  <Buffers>
+    <Tensor arg-index="0" type="input" port-index="0" format="BFYX"/>
+    <Tensor arg-index="1" type="input" port-index="1" format="BFYX"/>
+    <Tensor arg-index="2" type="input" port-index="2" format="BFYX"/>
+    <Tensor arg-index="3" type="input" port-index="3" format="BFYX"/>
+    <Tensor arg-index="4" type="input" port-index="4" format="BFYX"/>
+    <Tensor arg-index="5" type="input" port-index="5" format="BFYX"/>
+    <Tensor arg-index="6" type="input" port-index="6" format="BFYX"/>
+    <Tensor arg-index="7" type="input" port-index="7" format="BFYX"/>
+    <Tensor arg-index="8" type="input" port-index="8" format="BFYX"/>
+    <Tensor arg-index="9" type="input" port-index="9" format="BFYX"/>
+    <Tensor arg-index="10" type="input" port-index="10" format="BFYX"/>
+    <Tensor arg-index="11" type="input" port-index="11" format="BFYX"/>
+    <Tensor arg-index="12" type="input" port-index="12" format="BFYX"/>
+    <Tensor arg-index="13" type="output" port-index="0" format="BFYX"/>
+    <Tensor arg-index="14" type="output" port-index="1" format="BFYX"/>
+    <Tensor arg-index="15" type="output" port-index="2" format="BFYX"/>
+    <Tensor arg-index="16" type="output" port-index="3" format="BFYX"/>
+    <Tensor arg-index="17" type="output" port-index="4" format="BFYX"/>
+    <Tensor arg-index="18" type="output" port-index="5" format="BFYX"/>
+  </Buffers>
+  <CompilerOptions options="-cl-std=CL3.0 -cl-fp32-correctly-rounded-divide-sqrt -Dcl_intel_dot_accumulate -Dcl_intel_global_float_atomic -Dcl_intel_subgroup_matrix_multiply_accumulate -Dcl_intel_subgroup_split_matrix_multiply_accumulate -DIQ36_UNIFIED_SHAPE_SPECIALIZATION=1 -DIQ36_PREFILL_RUNTIME_LENGTH=1 -DIQ36_PREFILL_FULL_HISTORY=1 -DIQ36_PREFILL_USE_MICROKERNEL=1 -DIQ36_DIRECT_I8_FIXED_LAYOUT=1 -DIQ36_HOT_WINDOW=16384U -DIQ36_DIMENSION_MAJOR_VALUE_PLANE=1 -DIQ36_ADAPTIVE_ATTENTION_GRAPH=1 -DIQ36_ADAPTIVE_TOPK=512U"/>
+  <WorkSizes global="128,Y,B*F" local="128,1,1"/>
+</CustomLayer>
+<CustomLayer name="IQ36AdaptiveVResidual1Top512HotAttentionGQA" type="SimpleGPU" version="1">
+  <Kernel entry="iq36_adaptive_attention">
+    <Source filename="iq36_hot_attention_tiled_helpers.cl"/>
+    <Source filename="iq36_prefill_microkernel_shims.cl"/>
+    <Source filename="iq36_prefill_attention_tiled.cl"/>
+    <Source filename="iq36_hot_attention_single_owner.cl"/>
+    <Source filename="iq36_adaptive_attention_decode.cl"/>
+  </Kernel>
+  <Buffers>
+    <Tensor arg-index="0" type="input" port-index="0" format="BFYX"/>
+    <Tensor arg-index="1" type="input" port-index="1" format="BFYX"/>
+    <Tensor arg-index="2" type="input" port-index="2" format="BFYX"/>
+    <Tensor arg-index="3" type="input" port-index="3" format="BFYX"/>
+    <Tensor arg-index="4" type="input" port-index="4" format="BFYX"/>
+    <Tensor arg-index="5" type="input" port-index="5" format="BFYX"/>
+    <Tensor arg-index="6" type="input" port-index="6" format="BFYX"/>
+    <Tensor arg-index="7" type="input" port-index="7" format="BFYX"/>
+    <Tensor arg-index="8" type="input" port-index="8" format="BFYX"/>
+    <Tensor arg-index="9" type="input" port-index="9" format="BFYX"/>
+    <Tensor arg-index="10" type="input" port-index="10" format="BFYX"/>
+    <Tensor arg-index="11" type="input" port-index="11" format="BFYX"/>
+    <Tensor arg-index="12" type="input" port-index="12" format="BFYX"/>
+    <Tensor arg-index="13" type="output" port-index="0" format="BFYX"/>
+    <Tensor arg-index="14" type="output" port-index="1" format="BFYX"/>
+    <Tensor arg-index="15" type="output" port-index="2" format="BFYX"/>
+    <Tensor arg-index="16" type="output" port-index="3" format="BFYX"/>
+    <Tensor arg-index="17" type="output" port-index="4" format="BFYX"/>
+    <Tensor arg-index="18" type="output" port-index="5" format="BFYX"/>
+  </Buffers>
+  <CompilerOptions options="-cl-std=CL3.0 -cl-fp32-correctly-rounded-divide-sqrt -Dcl_intel_dot_accumulate -Dcl_intel_global_float_atomic -Dcl_intel_subgroup_matrix_multiply_accumulate -Dcl_intel_subgroup_split_matrix_multiply_accumulate -DIQ36_UNIFIED_SHAPE_SPECIALIZATION=1 -DIQ36_PREFILL_RUNTIME_LENGTH=1 -DIQ36_PREFILL_FULL_HISTORY=1 -DIQ36_PREFILL_USE_MICROKERNEL=1 -DIQ36_DIRECT_I8_FIXED_LAYOUT=1 -DIQ36_VALUE_RESIDUAL1=1 -DIQ36_HOT_WINDOW=16384U -DIQ36_DIMENSION_MAJOR_VALUE_PLANE=1 -DIQ36_ADAPTIVE_ATTENTION_GRAPH=1 -DIQ36_ADAPTIVE_TOPK=512U"/>
+  <WorkSizes global="128,Y,B*F" local="128,1,1"/>
+</CustomLayer>
+<CustomLayer name="IQ36AdaptiveKResidual1Top512HotAttentionGQA" type="SimpleGPU" version="1">
+  <Kernel entry="iq36_adaptive_attention">
+    <Source filename="iq36_hot_attention_tiled_helpers.cl"/>
+    <Source filename="iq36_prefill_microkernel_shims.cl"/>
+    <Source filename="iq36_prefill_attention_tiled.cl"/>
+    <Source filename="iq36_hot_attention_single_owner.cl"/>
+    <Source filename="iq36_adaptive_attention_decode.cl"/>
+  </Kernel>
+  <Buffers>
+    <Tensor arg-index="0" type="input" port-index="0" format="BFYX"/>
+    <Tensor arg-index="1" type="input" port-index="1" format="BFYX"/>
+    <Tensor arg-index="2" type="input" port-index="2" format="BFYX"/>
+    <Tensor arg-index="3" type="input" port-index="3" format="BFYX"/>
+    <Tensor arg-index="4" type="input" port-index="4" format="BFYX"/>
+    <Tensor arg-index="5" type="input" port-index="5" format="BFYX"/>
+    <Tensor arg-index="6" type="input" port-index="6" format="BFYX"/>
+    <Tensor arg-index="7" type="input" port-index="7" format="BFYX"/>
+    <Tensor arg-index="8" type="input" port-index="8" format="BFYX"/>
+    <Tensor arg-index="9" type="input" port-index="9" format="BFYX"/>
+    <Tensor arg-index="10" type="input" port-index="10" format="BFYX"/>
+    <Tensor arg-index="11" type="input" port-index="11" format="BFYX"/>
+    <Tensor arg-index="12" type="input" port-index="12" format="BFYX"/>
+    <Tensor arg-index="13" type="output" port-index="0" format="BFYX"/>
+    <Tensor arg-index="14" type="output" port-index="1" format="BFYX"/>
+    <Tensor arg-index="15" type="output" port-index="2" format="BFYX"/>
+    <Tensor arg-index="16" type="output" port-index="3" format="BFYX"/>
+    <Tensor arg-index="17" type="output" port-index="4" format="BFYX"/>
+    <Tensor arg-index="18" type="output" port-index="5" format="BFYX"/>
+  </Buffers>
+  <CompilerOptions options="-cl-std=CL3.0 -cl-fp32-correctly-rounded-divide-sqrt -Dcl_intel_dot_accumulate -Dcl_intel_global_float_atomic -Dcl_intel_subgroup_matrix_multiply_accumulate -Dcl_intel_subgroup_split_matrix_multiply_accumulate -DIQ36_UNIFIED_SHAPE_SPECIALIZATION=1 -DIQ36_PREFILL_RUNTIME_LENGTH=1 -DIQ36_PREFILL_FULL_HISTORY=1 -DIQ36_PREFILL_USE_MICROKERNEL=1 -DIQ36_DIRECT_I8_FIXED_LAYOUT=1 -DIQ36_KEY_RESIDUAL1=1 -DIQ36_HOT_WINDOW=16384U -DIQ36_DIMENSION_MAJOR_VALUE_PLANE=1 -DIQ36_ADAPTIVE_ATTENTION_GRAPH=1 -DIQ36_ADAPTIVE_TOPK=512U"/>
+  <WorkSizes global="128,Y,B*F" local="128,1,1"/>
+</CustomLayer>
+<CustomLayer name="IQ36AdaptiveKVResidual1Top512HotAttentionGQA" type="SimpleGPU" version="1">
+  <Kernel entry="iq36_adaptive_attention">
+    <Source filename="iq36_hot_attention_tiled_helpers.cl"/>
+    <Source filename="iq36_prefill_microkernel_shims.cl"/>
+    <Source filename="iq36_prefill_attention_tiled.cl"/>
+    <Source filename="iq36_hot_attention_single_owner.cl"/>
+    <Source filename="iq36_adaptive_attention_decode.cl"/>
+  </Kernel>
+  <Buffers>
+    <Tensor arg-index="0" type="input" port-index="0" format="BFYX"/>
+    <Tensor arg-index="1" type="input" port-index="1" format="BFYX"/>
+    <Tensor arg-index="2" type="input" port-index="2" format="BFYX"/>
+    <Tensor arg-index="3" type="input" port-index="3" format="BFYX"/>
+    <Tensor arg-index="4" type="input" port-index="4" format="BFYX"/>
+    <Tensor arg-index="5" type="input" port-index="5" format="BFYX"/>
+    <Tensor arg-index="6" type="input" port-index="6" format="BFYX"/>
+    <Tensor arg-index="7" type="input" port-index="7" format="BFYX"/>
+    <Tensor arg-index="8" type="input" port-index="8" format="BFYX"/>
+    <Tensor arg-index="9" type="input" port-index="9" format="BFYX"/>
+    <Tensor arg-index="10" type="input" port-index="10" format="BFYX"/>
+    <Tensor arg-index="11" type="input" port-index="11" format="BFYX"/>
+    <Tensor arg-index="12" type="input" port-index="12" format="BFYX"/>
+    <Tensor arg-index="13" type="output" port-index="0" format="BFYX"/>
+    <Tensor arg-index="14" type="output" port-index="1" format="BFYX"/>
+    <Tensor arg-index="15" type="output" port-index="2" format="BFYX"/>
+    <Tensor arg-index="16" type="output" port-index="3" format="BFYX"/>
+    <Tensor arg-index="17" type="output" port-index="4" format="BFYX"/>
+    <Tensor arg-index="18" type="output" port-index="5" format="BFYX"/>
+  </Buffers>
+  <CompilerOptions options="-cl-std=CL3.0 -cl-fp32-correctly-rounded-divide-sqrt -Dcl_intel_dot_accumulate -Dcl_intel_global_float_atomic -Dcl_intel_subgroup_matrix_multiply_accumulate -Dcl_intel_subgroup_split_matrix_multiply_accumulate -DIQ36_UNIFIED_SHAPE_SPECIALIZATION=1 -DIQ36_PREFILL_RUNTIME_LENGTH=1 -DIQ36_PREFILL_FULL_HISTORY=1 -DIQ36_PREFILL_USE_MICROKERNEL=1 -DIQ36_DIRECT_I8_FIXED_LAYOUT=1 -DIQ36_KEY_RESIDUAL1=1 -DIQ36_VALUE_RESIDUAL1=1 -DIQ36_HOT_WINDOW=16384U -DIQ36_DIMENSION_MAJOR_VALUE_PLANE=1 -DIQ36_ADAPTIVE_ATTENTION_GRAPH=1 -DIQ36_ADAPTIVE_TOPK=512U"/>
+  <WorkSizes global="128,Y,B*F" local="128,1,1"/>
+</CustomLayer>
+<CustomLayer name="IQ36AdaptiveVResidual1Top256HotAttentionGQA" type="SimpleGPU" version="1">
+  <Kernel entry="iq36_adaptive_attention">
+    <Source filename="iq36_hot_attention_tiled_helpers.cl"/>
+    <Source filename="iq36_prefill_microkernel_shims.cl"/>
+    <Source filename="iq36_prefill_attention_tiled.cl"/>
+    <Source filename="iq36_hot_attention_single_owner.cl"/>
+    <Source filename="iq36_adaptive_attention_decode.cl"/>
+  </Kernel>
+  <Buffers>
+    <Tensor arg-index="0" type="input" port-index="0" format="BFYX"/>
+    <Tensor arg-index="1" type="input" port-index="1" format="BFYX"/>
+    <Tensor arg-index="2" type="input" port-index="2" format="BFYX"/>
+    <Tensor arg-index="3" type="input" port-index="3" format="BFYX"/>
+    <Tensor arg-index="4" type="input" port-index="4" format="BFYX"/>
+    <Tensor arg-index="5" type="input" port-index="5" format="BFYX"/>
+    <Tensor arg-index="6" type="input" port-index="6" format="BFYX"/>
+    <Tensor arg-index="7" type="input" port-index="7" format="BFYX"/>
+    <Tensor arg-index="8" type="input" port-index="8" format="BFYX"/>
+    <Tensor arg-index="9" type="input" port-index="9" format="BFYX"/>
+    <Tensor arg-index="10" type="input" port-index="10" format="BFYX"/>
+    <Tensor arg-index="11" type="input" port-index="11" format="BFYX"/>
+    <Tensor arg-index="12" type="input" port-index="12" format="BFYX"/>
+    <Tensor arg-index="13" type="output" port-index="0" format="BFYX"/>
+    <Tensor arg-index="14" type="output" port-index="1" format="BFYX"/>
+    <Tensor arg-index="15" type="output" port-index="2" format="BFYX"/>
+    <Tensor arg-index="16" type="output" port-index="3" format="BFYX"/>
+    <Tensor arg-index="17" type="output" port-index="4" format="BFYX"/>
+    <Tensor arg-index="18" type="output" port-index="5" format="BFYX"/>
+  </Buffers>
+  <CompilerOptions options="-cl-std=CL3.0 -cl-fp32-correctly-rounded-divide-sqrt -Dcl_intel_dot_accumulate -Dcl_intel_global_float_atomic -Dcl_intel_subgroup_matrix_multiply_accumulate -Dcl_intel_subgroup_split_matrix_multiply_accumulate -DIQ36_UNIFIED_SHAPE_SPECIALIZATION=1 -DIQ36_PREFILL_RUNTIME_LENGTH=1 -DIQ36_PREFILL_FULL_HISTORY=1 -DIQ36_PREFILL_USE_MICROKERNEL=1 -DIQ36_DIRECT_I8_FIXED_LAYOUT=1 -DIQ36_VALUE_RESIDUAL1=1 -DIQ36_HOT_WINDOW=16384U -DIQ36_DIMENSION_MAJOR_VALUE_PLANE=1 -DIQ36_ADAPTIVE_ATTENTION_GRAPH=1 -DIQ36_ADAPTIVE_TOPK=256U"/>
+  <WorkSizes global="128,Y,B*F" local="128,1,1"/>
+</CustomLayer>
+<CustomLayer name="IQ36AdaptiveKResidual1Top256HotAttentionGQA" type="SimpleGPU" version="1">
+  <Kernel entry="iq36_adaptive_attention">
+    <Source filename="iq36_hot_attention_tiled_helpers.cl"/>
+    <Source filename="iq36_prefill_microkernel_shims.cl"/>
+    <Source filename="iq36_prefill_attention_tiled.cl"/>
+    <Source filename="iq36_hot_attention_single_owner.cl"/>
+    <Source filename="iq36_adaptive_attention_decode.cl"/>
+  </Kernel>
+  <Buffers>
+    <Tensor arg-index="0" type="input" port-index="0" format="BFYX"/>
+    <Tensor arg-index="1" type="input" port-index="1" format="BFYX"/>
+    <Tensor arg-index="2" type="input" port-index="2" format="BFYX"/>
+    <Tensor arg-index="3" type="input" port-index="3" format="BFYX"/>
+    <Tensor arg-index="4" type="input" port-index="4" format="BFYX"/>
+    <Tensor arg-index="5" type="input" port-index="5" format="BFYX"/>
+    <Tensor arg-index="6" type="input" port-index="6" format="BFYX"/>
+    <Tensor arg-index="7" type="input" port-index="7" format="BFYX"/>
+    <Tensor arg-index="8" type="input" port-index="8" format="BFYX"/>
+    <Tensor arg-index="9" type="input" port-index="9" format="BFYX"/>
+    <Tensor arg-index="10" type="input" port-index="10" format="BFYX"/>
+    <Tensor arg-index="11" type="input" port-index="11" format="BFYX"/>
+    <Tensor arg-index="12" type="input" port-index="12" format="BFYX"/>
+    <Tensor arg-index="13" type="output" port-index="0" format="BFYX"/>
+    <Tensor arg-index="14" type="output" port-index="1" format="BFYX"/>
+    <Tensor arg-index="15" type="output" port-index="2" format="BFYX"/>
+    <Tensor arg-index="16" type="output" port-index="3" format="BFYX"/>
+    <Tensor arg-index="17" type="output" port-index="4" format="BFYX"/>
+    <Tensor arg-index="18" type="output" port-index="5" format="BFYX"/>
+  </Buffers>
+  <CompilerOptions options="-cl-std=CL3.0 -cl-fp32-correctly-rounded-divide-sqrt -Dcl_intel_dot_accumulate -Dcl_intel_global_float_atomic -Dcl_intel_subgroup_matrix_multiply_accumulate -Dcl_intel_subgroup_split_matrix_multiply_accumulate -DIQ36_UNIFIED_SHAPE_SPECIALIZATION=1 -DIQ36_PREFILL_RUNTIME_LENGTH=1 -DIQ36_PREFILL_FULL_HISTORY=1 -DIQ36_PREFILL_USE_MICROKERNEL=1 -DIQ36_DIRECT_I8_FIXED_LAYOUT=1 -DIQ36_KEY_RESIDUAL1=1 -DIQ36_HOT_WINDOW=16384U -DIQ36_DIMENSION_MAJOR_VALUE_PLANE=1 -DIQ36_ADAPTIVE_ATTENTION_GRAPH=1 -DIQ36_ADAPTIVE_TOPK=256U"/>
+  <WorkSizes global="128,Y,B*F" local="128,1,1"/>
+</CustomLayer>
+<CustomLayer name="IQ36AdaptiveKVResidual1Top256HotAttentionGQA" type="SimpleGPU" version="1">
+  <Kernel entry="iq36_adaptive_attention">
+    <Source filename="iq36_hot_attention_tiled_helpers.cl"/>
+    <Source filename="iq36_prefill_microkernel_shims.cl"/>
+    <Source filename="iq36_prefill_attention_tiled.cl"/>
+    <Source filename="iq36_hot_attention_single_owner.cl"/>
+    <Source filename="iq36_adaptive_attention_decode.cl"/>
+  </Kernel>
+  <Buffers>
+    <Tensor arg-index="0" type="input" port-index="0" format="BFYX"/>
+    <Tensor arg-index="1" type="input" port-index="1" format="BFYX"/>
+    <Tensor arg-index="2" type="input" port-index="2" format="BFYX"/>
+    <Tensor arg-index="3" type="input" port-index="3" format="BFYX"/>
+    <Tensor arg-index="4" type="input" port-index="4" format="BFYX"/>
+    <Tensor arg-index="5" type="input" port-index="5" format="BFYX"/>
+    <Tensor arg-index="6" type="input" port-index="6" format="BFYX"/>
+    <Tensor arg-index="7" type="input" port-index="7" format="BFYX"/>
+    <Tensor arg-index="8" type="input" port-index="8" format="BFYX"/>
+    <Tensor arg-index="9" type="input" port-index="9" format="BFYX"/>
+    <Tensor arg-index="10" type="input" port-index="10" format="BFYX"/>
+    <Tensor arg-index="11" type="input" port-index="11" format="BFYX"/>
+    <Tensor arg-index="12" type="input" port-index="12" format="BFYX"/>
+    <Tensor arg-index="13" type="output" port-index="0" format="BFYX"/>
+    <Tensor arg-index="14" type="output" port-index="1" format="BFYX"/>
+    <Tensor arg-index="15" type="output" port-index="2" format="BFYX"/>
+    <Tensor arg-index="16" type="output" port-index="3" format="BFYX"/>
+    <Tensor arg-index="17" type="output" port-index="4" format="BFYX"/>
+    <Tensor arg-index="18" type="output" port-index="5" format="BFYX"/>
+  </Buffers>
+  <CompilerOptions options="-cl-std=CL3.0 -cl-fp32-correctly-rounded-divide-sqrt -Dcl_intel_dot_accumulate -Dcl_intel_global_float_atomic -Dcl_intel_subgroup_matrix_multiply_accumulate -Dcl_intel_subgroup_split_matrix_multiply_accumulate -DIQ36_UNIFIED_SHAPE_SPECIALIZATION=1 -DIQ36_PREFILL_RUNTIME_LENGTH=1 -DIQ36_PREFILL_FULL_HISTORY=1 -DIQ36_PREFILL_USE_MICROKERNEL=1 -DIQ36_DIRECT_I8_FIXED_LAYOUT=1 -DIQ36_KEY_RESIDUAL1=1 -DIQ36_VALUE_RESIDUAL1=1 -DIQ36_HOT_WINDOW=16384U -DIQ36_DIMENSION_MAJOR_VALUE_PLANE=1 -DIQ36_ADAPTIVE_ATTENTION_GRAPH=1 -DIQ36_ADAPTIVE_TOPK=256U"/>
+  <WorkSizes global="128,Y,B*F" local="128,1,1"/>
+</CustomLayer>
+<CustomLayer name="IQ36AdaptiveKeyExactTop256HotAttentionGQA" type="SimpleGPU" version="1">
+  <Kernel entry="iq36_adaptive_attention">
+    <Source filename="iq36_hot_attention_tiled_helpers.cl"/>
+    <Source filename="iq36_prefill_microkernel_shims.cl"/>
+    <Source filename="iq36_prefill_attention_tiled.cl"/>
+    <Source filename="iq36_hot_attention_single_owner.cl"/>
+    <Source filename="iq36_adaptive_attention_decode.cl"/>
+  </Kernel>
+  <Buffers>
+    <Tensor arg-index="0" type="input" port-index="0" format="BFYX"/>
+    <Tensor arg-index="1" type="input" port-index="1" format="BFYX"/>
+    <Tensor arg-index="2" type="input" port-index="2" format="BFYX"/>
+    <Tensor arg-index="3" type="input" port-index="3" format="BFYX"/>
+    <Tensor arg-index="4" type="input" port-index="4" format="BFYX"/>
+    <Tensor arg-index="5" type="input" port-index="5" format="BFYX"/>
+    <Tensor arg-index="6" type="input" port-index="6" format="BFYX"/>
+    <Tensor arg-index="7" type="input" port-index="7" format="BFYX"/>
+    <Tensor arg-index="8" type="input" port-index="8" format="BFYX"/>
+    <Tensor arg-index="9" type="input" port-index="9" format="BFYX"/>
+    <Tensor arg-index="10" type="input" port-index="10" format="BFYX"/>
+    <Tensor arg-index="11" type="input" port-index="11" format="BFYX"/>
+    <Tensor arg-index="12" type="input" port-index="12" format="BFYX"/>
+    <Tensor arg-index="13" type="output" port-index="0" format="BFYX"/>
+    <Tensor arg-index="14" type="output" port-index="1" format="BFYX"/>
+    <Tensor arg-index="15" type="output" port-index="2" format="BFYX"/>
+    <Tensor arg-index="16" type="output" port-index="3" format="BFYX"/>
+    <Tensor arg-index="17" type="output" port-index="4" format="BFYX"/>
+    <Tensor arg-index="18" type="output" port-index="5" format="BFYX"/>
+  </Buffers>
+  <CompilerOptions options="-cl-std=CL3.0 -cl-fp32-correctly-rounded-divide-sqrt -Dcl_intel_dot_accumulate -Dcl_intel_global_float_atomic -Dcl_intel_subgroup_matrix_multiply_accumulate -Dcl_intel_subgroup_split_matrix_multiply_accumulate -DIQ36_UNIFIED_SHAPE_SPECIALIZATION=1 -DIQ36_PREFILL_RUNTIME_LENGTH=1 -DIQ36_PREFILL_FULL_HISTORY=1 -DIQ36_PREFILL_USE_MICROKERNEL=1 -DIQ36_DIRECT_I8_FIXED_LAYOUT=1 -DIQ36_ADAPTIVE_KEY_EXACT=1 -DIQ36_HOT_WINDOW=16384U -DIQ36_DIMENSION_MAJOR_VALUE_PLANE=1 -DIQ36_ADAPTIVE_ATTENTION_GRAPH=1 -DIQ36_ADAPTIVE_TOPK=256U"/>
+  <WorkSizes global="128,Y,B*F" local="128,1,1"/>
+</CustomLayer>
+<CustomLayer name="IQ36AdaptiveK6V7Top256HotAttentionGQA" type="SimpleGPU" version="1">
+  <Kernel entry="iq36_adaptive_attention">
+    <Source filename="iq36_hot_attention_tiled_helpers.cl"/>
+    <Source filename="iq36_prefill_microkernel_shims.cl"/>
+    <Source filename="iq36_prefill_attention_tiled.cl"/>
+    <Source filename="iq36_hot_attention_single_owner.cl"/>
+    <Source filename="iq36_adaptive_attention_decode.cl"/>
+  </Kernel>
+  <Buffers>
+    <Tensor arg-index="0" type="input" port-index="0" format="BFYX"/>
+    <Tensor arg-index="1" type="input" port-index="1" format="BFYX"/>
+    <Tensor arg-index="2" type="input" port-index="2" format="BFYX"/>
+    <Tensor arg-index="3" type="input" port-index="3" format="BFYX"/>
+    <Tensor arg-index="4" type="input" port-index="4" format="BFYX"/>
+    <Tensor arg-index="5" type="input" port-index="5" format="BFYX"/>
+    <Tensor arg-index="6" type="input" port-index="6" format="BFYX"/>
+    <Tensor arg-index="7" type="input" port-index="7" format="BFYX"/>
+    <Tensor arg-index="8" type="input" port-index="8" format="BFYX"/>
+    <Tensor arg-index="9" type="input" port-index="9" format="BFYX"/>
+    <Tensor arg-index="10" type="input" port-index="10" format="BFYX"/>
+    <Tensor arg-index="11" type="input" port-index="11" format="BFYX"/>
+    <Tensor arg-index="12" type="input" port-index="12" format="BFYX"/>
+    <Tensor arg-index="13" type="output" port-index="0" format="BFYX"/>
+    <Tensor arg-index="14" type="output" port-index="1" format="BFYX"/>
+    <Tensor arg-index="15" type="output" port-index="2" format="BFYX"/>
+    <Tensor arg-index="16" type="output" port-index="3" format="BFYX"/>
+    <Tensor arg-index="17" type="output" port-index="4" format="BFYX"/>
+    <Tensor arg-index="18" type="output" port-index="5" format="BFYX"/>
+  </Buffers>
+  <CompilerOptions options="-cl-std=CL3.0 -cl-fp32-correctly-rounded-divide-sqrt -Dcl_intel_dot_accumulate -Dcl_intel_global_float_atomic -Dcl_intel_subgroup_matrix_multiply_accumulate -Dcl_intel_subgroup_split_matrix_multiply_accumulate -DIQ36_UNIFIED_SHAPE_SPECIALIZATION=1 -DIQ36_PREFILL_RUNTIME_LENGTH=1 -DIQ36_PREFILL_FULL_HISTORY=1 -DIQ36_PREFILL_USE_MICROKERNEL=1 -DIQ36_DIRECT_I8_FIXED_LAYOUT=1 -DIQ36_HOT_WINDOW=16384U -DIQ36_DIMENSION_MAJOR_VALUE_PLANE=1 -DIQ36_ADAPTIVE_ATTENTION_GRAPH=1 -DIQ36_ADAPTIVE_TOPK=256U -DIQ36_ADAPTIVE_PACKED_K6V7=1"/>
+  <WorkSizes global="128,Y,B*F" local="128,1,1"/>
+</CustomLayer>
+<CustomLayer name="IQ36AdaptiveK7V7Top256HotAttentionGQA" type="SimpleGPU" version="1">
+  <Kernel entry="iq36_adaptive_attention">
+    <Source filename="iq36_hot_attention_tiled_helpers.cl"/>
+    <Source filename="iq36_prefill_microkernel_shims.cl"/>
+    <Source filename="iq36_prefill_attention_tiled.cl"/>
+    <Source filename="iq36_hot_attention_single_owner.cl"/>
+    <Source filename="iq36_adaptive_attention_decode.cl"/>
+  </Kernel>
+  <Buffers>
+    <Tensor arg-index="0" type="input" port-index="0" format="BFYX"/>
+    <Tensor arg-index="1" type="input" port-index="1" format="BFYX"/>
+    <Tensor arg-index="2" type="input" port-index="2" format="BFYX"/>
+    <Tensor arg-index="3" type="input" port-index="3" format="BFYX"/>
+    <Tensor arg-index="4" type="input" port-index="4" format="BFYX"/>
+    <Tensor arg-index="5" type="input" port-index="5" format="BFYX"/>
+    <Tensor arg-index="6" type="input" port-index="6" format="BFYX"/>
+    <Tensor arg-index="7" type="input" port-index="7" format="BFYX"/>
+    <Tensor arg-index="8" type="input" port-index="8" format="BFYX"/>
+    <Tensor arg-index="9" type="input" port-index="9" format="BFYX"/>
+    <Tensor arg-index="10" type="input" port-index="10" format="BFYX"/>
+    <Tensor arg-index="11" type="input" port-index="11" format="BFYX"/>
+    <Tensor arg-index="12" type="input" port-index="12" format="BFYX"/>
+    <Tensor arg-index="13" type="output" port-index="0" format="BFYX"/>
+    <Tensor arg-index="14" type="output" port-index="1" format="BFYX"/>
+    <Tensor arg-index="15" type="output" port-index="2" format="BFYX"/>
+    <Tensor arg-index="16" type="output" port-index="3" format="BFYX"/>
+    <Tensor arg-index="17" type="output" port-index="4" format="BFYX"/>
+    <Tensor arg-index="18" type="output" port-index="5" format="BFYX"/>
+  </Buffers>
+  <CompilerOptions options="-cl-std=CL3.0 -cl-fp32-correctly-rounded-divide-sqrt -Dcl_intel_dot_accumulate -Dcl_intel_global_float_atomic -Dcl_intel_subgroup_matrix_multiply_accumulate -Dcl_intel_subgroup_split_matrix_multiply_accumulate -DIQ36_UNIFIED_SHAPE_SPECIALIZATION=1 -DIQ36_PREFILL_RUNTIME_LENGTH=1 -DIQ36_PREFILL_FULL_HISTORY=1 -DIQ36_PREFILL_USE_MICROKERNEL=1 -DIQ36_DIRECT_I8_FIXED_LAYOUT=1 -DIQ36_HOT_WINDOW=16384U -DIQ36_DIMENSION_MAJOR_VALUE_PLANE=1 -DIQ36_ADAPTIVE_ATTENTION_GRAPH=1 -DIQ36_ADAPTIVE_TOPK=256U -DIQ36_ADAPTIVE_PACKED_K7V7=1"/>
+  <WorkSizes global="128,Y,B*F" local="128,1,1"/>
+</CustomLayer>
+<CustomLayer name="IQ36AdaptiveK7V8Top256HotAttentionGQA" type="SimpleGPU" version="1">
+  <Kernel entry="iq36_adaptive_attention">
+    <Source filename="iq36_hot_attention_tiled_helpers.cl"/>
+    <Source filename="iq36_prefill_microkernel_shims.cl"/>
+    <Source filename="iq36_prefill_attention_tiled.cl"/>
+    <Source filename="iq36_hot_attention_single_owner.cl"/>
+    <Source filename="iq36_adaptive_attention_decode.cl"/>
+  </Kernel>
+  <Buffers>
+    <Tensor arg-index="0" type="input" port-index="0" format="BFYX"/>
+    <Tensor arg-index="1" type="input" port-index="1" format="BFYX"/>
+    <Tensor arg-index="2" type="input" port-index="2" format="BFYX"/>
+    <Tensor arg-index="3" type="input" port-index="3" format="BFYX"/>
+    <Tensor arg-index="4" type="input" port-index="4" format="BFYX"/>
+    <Tensor arg-index="5" type="input" port-index="5" format="BFYX"/>
+    <Tensor arg-index="6" type="input" port-index="6" format="BFYX"/>
+    <Tensor arg-index="7" type="input" port-index="7" format="BFYX"/>
+    <Tensor arg-index="8" type="input" port-index="8" format="BFYX"/>
+    <Tensor arg-index="9" type="input" port-index="9" format="BFYX"/>
+    <Tensor arg-index="10" type="input" port-index="10" format="BFYX"/>
+    <Tensor arg-index="11" type="input" port-index="11" format="BFYX"/>
+    <Tensor arg-index="12" type="input" port-index="12" format="BFYX"/>
+    <Tensor arg-index="13" type="output" port-index="0" format="BFYX"/>
+    <Tensor arg-index="14" type="output" port-index="1" format="BFYX"/>
+    <Tensor arg-index="15" type="output" port-index="2" format="BFYX"/>
+    <Tensor arg-index="16" type="output" port-index="3" format="BFYX"/>
+    <Tensor arg-index="17" type="output" port-index="4" format="BFYX"/>
+    <Tensor arg-index="18" type="output" port-index="5" format="BFYX"/>
+  </Buffers>
+  <CompilerOptions options="-cl-std=CL3.0 -cl-fp32-correctly-rounded-divide-sqrt -Dcl_intel_dot_accumulate -Dcl_intel_global_float_atomic -Dcl_intel_subgroup_matrix_multiply_accumulate -Dcl_intel_subgroup_split_matrix_multiply_accumulate -DIQ36_UNIFIED_SHAPE_SPECIALIZATION=1 -DIQ36_PREFILL_RUNTIME_LENGTH=1 -DIQ36_PREFILL_FULL_HISTORY=1 -DIQ36_PREFILL_USE_MICROKERNEL=1 -DIQ36_DIRECT_I8_FIXED_LAYOUT=1 -DIQ36_HOT_WINDOW=16384U -DIQ36_DIMENSION_MAJOR_VALUE_PLANE=1 -DIQ36_ADAPTIVE_ATTENTION_GRAPH=1 -DIQ36_ADAPTIVE_TOPK=256U -DIQ36_ADAPTIVE_PACKED_K7V8=1"/>
+  <WorkSizes global="128,Y,B*F" local="128,1,1"/>
+</CustomLayer>
+<CustomLayer name="IQ36AdaptiveK7V8Top512HotAttentionGQA" type="SimpleGPU" version="1">
+  <Kernel entry="iq36_adaptive_attention">
+    <Source filename="iq36_hot_attention_tiled_helpers.cl"/>
+    <Source filename="iq36_prefill_microkernel_shims.cl"/>
+    <Source filename="iq36_prefill_attention_tiled.cl"/>
+    <Source filename="iq36_hot_attention_single_owner.cl"/>
+    <Source filename="iq36_adaptive_attention_decode.cl"/>
+  </Kernel>
+  <Buffers>
+    <Tensor arg-index="0" type="input" port-index="0" format="BFYX"/>
+    <Tensor arg-index="1" type="input" port-index="1" format="BFYX"/>
+    <Tensor arg-index="2" type="input" port-index="2" format="BFYX"/>
+    <Tensor arg-index="3" type="input" port-index="3" format="BFYX"/>
+    <Tensor arg-index="4" type="input" port-index="4" format="BFYX"/>
+    <Tensor arg-index="5" type="input" port-index="5" format="BFYX"/>
+    <Tensor arg-index="6" type="input" port-index="6" format="BFYX"/>
+    <Tensor arg-index="7" type="input" port-index="7" format="BFYX"/>
+    <Tensor arg-index="8" type="input" port-index="8" format="BFYX"/>
+    <Tensor arg-index="9" type="input" port-index="9" format="BFYX"/>
+    <Tensor arg-index="10" type="input" port-index="10" format="BFYX"/>
+    <Tensor arg-index="11" type="input" port-index="11" format="BFYX"/>
+    <Tensor arg-index="12" type="input" port-index="12" format="BFYX"/>
+    <Tensor arg-index="13" type="output" port-index="0" format="BFYX"/>
+    <Tensor arg-index="14" type="output" port-index="1" format="BFYX"/>
+    <Tensor arg-index="15" type="output" port-index="2" format="BFYX"/>
+    <Tensor arg-index="16" type="output" port-index="3" format="BFYX"/>
+    <Tensor arg-index="17" type="output" port-index="4" format="BFYX"/>
+    <Tensor arg-index="18" type="output" port-index="5" format="BFYX"/>
+  </Buffers>
+  <CompilerOptions options="-cl-std=CL3.0 -cl-fp32-correctly-rounded-divide-sqrt -Dcl_intel_dot_accumulate -Dcl_intel_global_float_atomic -Dcl_intel_subgroup_matrix_multiply_accumulate -Dcl_intel_subgroup_split_matrix_multiply_accumulate -DIQ36_UNIFIED_SHAPE_SPECIALIZATION=1 -DIQ36_PREFILL_RUNTIME_LENGTH=1 -DIQ36_PREFILL_FULL_HISTORY=1 -DIQ36_PREFILL_USE_MICROKERNEL=1 -DIQ36_DIRECT_I8_FIXED_LAYOUT=1 -DIQ36_HOT_WINDOW=16384U -DIQ36_DIMENSION_MAJOR_VALUE_PLANE=1 -DIQ36_ADAPTIVE_ATTENTION_GRAPH=1 -DIQ36_ADAPTIVE_TOPK=512U -DIQ36_ADAPTIVE_PACKED_K7V8=1"/>
+  <WorkSizes global="128,Y,B*F" local="128,1,1"/>
+</CustomLayer>
+<CustomLayer name="IQ36AdaptiveK8V7Top256HotAttentionGQA" type="SimpleGPU" version="1">
+  <Kernel entry="iq36_adaptive_attention">
+    <Source filename="iq36_hot_attention_tiled_helpers.cl"/>
+    <Source filename="iq36_prefill_microkernel_shims.cl"/>
+    <Source filename="iq36_prefill_attention_tiled.cl"/>
+    <Source filename="iq36_hot_attention_single_owner.cl"/>
+    <Source filename="iq36_adaptive_attention_decode.cl"/>
+  </Kernel>
+  <Buffers>
+    <Tensor arg-index="0" type="input" port-index="0" format="BFYX"/>
+    <Tensor arg-index="1" type="input" port-index="1" format="BFYX"/>
+    <Tensor arg-index="2" type="input" port-index="2" format="BFYX"/>
+    <Tensor arg-index="3" type="input" port-index="3" format="BFYX"/>
+    <Tensor arg-index="4" type="input" port-index="4" format="BFYX"/>
+    <Tensor arg-index="5" type="input" port-index="5" format="BFYX"/>
+    <Tensor arg-index="6" type="input" port-index="6" format="BFYX"/>
+    <Tensor arg-index="7" type="input" port-index="7" format="BFYX"/>
+    <Tensor arg-index="8" type="input" port-index="8" format="BFYX"/>
+    <Tensor arg-index="9" type="input" port-index="9" format="BFYX"/>
+    <Tensor arg-index="10" type="input" port-index="10" format="BFYX"/>
+    <Tensor arg-index="11" type="input" port-index="11" format="BFYX"/>
+    <Tensor arg-index="12" type="input" port-index="12" format="BFYX"/>
+    <Tensor arg-index="13" type="output" port-index="0" format="BFYX"/>
+    <Tensor arg-index="14" type="output" port-index="1" format="BFYX"/>
+    <Tensor arg-index="15" type="output" port-index="2" format="BFYX"/>
+    <Tensor arg-index="16" type="output" port-index="3" format="BFYX"/>
+    <Tensor arg-index="17" type="output" port-index="4" format="BFYX"/>
+    <Tensor arg-index="18" type="output" port-index="5" format="BFYX"/>
+  </Buffers>
+  <CompilerOptions options="-cl-std=CL3.0 -cl-fp32-correctly-rounded-divide-sqrt -Dcl_intel_dot_accumulate -Dcl_intel_global_float_atomic -Dcl_intel_subgroup_matrix_multiply_accumulate -Dcl_intel_subgroup_split_matrix_multiply_accumulate -DIQ36_UNIFIED_SHAPE_SPECIALIZATION=1 -DIQ36_PREFILL_RUNTIME_LENGTH=1 -DIQ36_PREFILL_FULL_HISTORY=1 -DIQ36_PREFILL_USE_MICROKERNEL=1 -DIQ36_DIRECT_I8_FIXED_LAYOUT=1 -DIQ36_HOT_WINDOW=16384U -DIQ36_DIMENSION_MAJOR_VALUE_PLANE=1 -DIQ36_ADAPTIVE_ATTENTION_GRAPH=1 -DIQ36_ADAPTIVE_TOPK=256U -DIQ36_ADAPTIVE_PACKED_K8V7=1"/>
+  <WorkSizes global="128,Y,B*F" local="128,1,1"/>
+</CustomLayer>
+<CustomLayer name="IQ36AdaptiveTop256HotAttentionGQA" type="SimpleGPU" version="1">
+  <Kernel entry="iq36_adaptive_attention">
+    <Source filename="iq36_hot_attention_tiled_helpers.cl"/>
+    <Source filename="iq36_prefill_microkernel_shims.cl"/>
+    <Source filename="iq36_prefill_attention_tiled.cl"/>
+    <Source filename="iq36_hot_attention_single_owner.cl"/>
+    <Source filename="iq36_adaptive_attention_decode.cl"/>
+  </Kernel>
+  <Buffers>
+    <Tensor arg-index="0" type="input" port-index="0" format="BFYX"/>
+    <Tensor arg-index="1" type="input" port-index="1" format="BFYX"/>
+    <Tensor arg-index="2" type="input" port-index="2" format="BFYX"/>
+    <Tensor arg-index="3" type="input" port-index="3" format="BFYX"/>
+    <Tensor arg-index="4" type="input" port-index="4" format="BFYX"/>
+    <Tensor arg-index="5" type="input" port-index="5" format="BFYX"/>
+    <Tensor arg-index="6" type="input" port-index="6" format="BFYX"/>
+    <Tensor arg-index="7" type="input" port-index="7" format="BFYX"/>
+    <Tensor arg-index="8" type="input" port-index="8" format="BFYX"/>
+    <Tensor arg-index="9" type="input" port-index="9" format="BFYX"/>
+    <Tensor arg-index="10" type="input" port-index="10" format="BFYX"/>
+    <Tensor arg-index="11" type="input" port-index="11" format="BFYX"/>
+    <Tensor arg-index="12" type="input" port-index="12" format="BFYX"/>
+    <Tensor arg-index="13" type="output" port-index="0" format="BFYX"/>
+    <Tensor arg-index="14" type="output" port-index="1" format="BFYX"/>
+    <Tensor arg-index="15" type="output" port-index="2" format="BFYX"/>
+    <Tensor arg-index="16" type="output" port-index="3" format="BFYX"/>
+    <Tensor arg-index="17" type="output" port-index="4" format="BFYX"/>
+    <Tensor arg-index="18" type="output" port-index="5" format="BFYX"/>
+  </Buffers>
+  <CompilerOptions options="-cl-std=CL3.0 -cl-fp32-correctly-rounded-divide-sqrt -Dcl_intel_dot_accumulate -Dcl_intel_global_float_atomic -Dcl_intel_subgroup_matrix_multiply_accumulate -Dcl_intel_subgroup_split_matrix_multiply_accumulate -DIQ36_UNIFIED_SHAPE_SPECIALIZATION=1 -DIQ36_PREFILL_RUNTIME_LENGTH=1 -DIQ36_PREFILL_FULL_HISTORY=1 -DIQ36_PREFILL_USE_MICROKERNEL=1 -DIQ36_DIRECT_I8_FIXED_LAYOUT=1 -DIQ36_HOT_WINDOW=16384U -DIQ36_DIMENSION_MAJOR_VALUE_PLANE=1 -DIQ36_ADAPTIVE_ATTENTION_GRAPH=1 -DIQ36_ADAPTIVE_TOPK=256U"/>
+  <WorkSizes global="128,Y,B*F" local="128,1,1"/>
+</CustomLayer>
+<CustomLayer name="IQ36AdaptiveTop252HotAttentionGQA" type="SimpleGPU" version="1">
+  <Kernel entry="iq36_adaptive_attention">
+    <Source filename="iq36_hot_attention_tiled_helpers.cl"/>
+    <Source filename="iq36_prefill_microkernel_shims.cl"/>
+    <Source filename="iq36_prefill_attention_tiled.cl"/>
+    <Source filename="iq36_hot_attention_single_owner.cl"/>
+    <Source filename="iq36_adaptive_attention_decode.cl"/>
+  </Kernel>
+  <Buffers>
+    <Tensor arg-index="0" type="input" port-index="0" format="BFYX"/>
+    <Tensor arg-index="1" type="input" port-index="1" format="BFYX"/>
+    <Tensor arg-index="2" type="input" port-index="2" format="BFYX"/>
+    <Tensor arg-index="3" type="input" port-index="3" format="BFYX"/>
+    <Tensor arg-index="4" type="input" port-index="4" format="BFYX"/>
+    <Tensor arg-index="5" type="input" port-index="5" format="BFYX"/>
+    <Tensor arg-index="6" type="input" port-index="6" format="BFYX"/>
+    <Tensor arg-index="7" type="input" port-index="7" format="BFYX"/>
+    <Tensor arg-index="8" type="input" port-index="8" format="BFYX"/>
+    <Tensor arg-index="9" type="input" port-index="9" format="BFYX"/>
+    <Tensor arg-index="10" type="input" port-index="10" format="BFYX"/>
+    <Tensor arg-index="11" type="input" port-index="11" format="BFYX"/>
+    <Tensor arg-index="12" type="input" port-index="12" format="BFYX"/>
+    <Tensor arg-index="13" type="output" port-index="0" format="BFYX"/>
+    <Tensor arg-index="14" type="output" port-index="1" format="BFYX"/>
+    <Tensor arg-index="15" type="output" port-index="2" format="BFYX"/>
+    <Tensor arg-index="16" type="output" port-index="3" format="BFYX"/>
+    <Tensor arg-index="17" type="output" port-index="4" format="BFYX"/>
+    <Tensor arg-index="18" type="output" port-index="5" format="BFYX"/>
+  </Buffers>
+  <CompilerOptions options="-cl-std=CL3.0 -cl-fp32-correctly-rounded-divide-sqrt -Dcl_intel_dot_accumulate -Dcl_intel_global_float_atomic -Dcl_intel_subgroup_matrix_multiply_accumulate -Dcl_intel_subgroup_split_matrix_multiply_accumulate -DIQ36_UNIFIED_SHAPE_SPECIALIZATION=1 -DIQ36_PREFILL_RUNTIME_LENGTH=1 -DIQ36_PREFILL_FULL_HISTORY=1 -DIQ36_PREFILL_USE_MICROKERNEL=1 -DIQ36_DIRECT_I8_FIXED_LAYOUT=1 -DIQ36_HOT_WINDOW=16384U -DIQ36_DIMENSION_MAJOR_VALUE_PLANE=1 -DIQ36_ADAPTIVE_ATTENTION_GRAPH=1 -DIQ36_ADAPTIVE_TOPK=252U"/>
+  <WorkSizes global="128,Y,B*F" local="128,1,1"/>
+</CustomLayer>
+<CustomLayer name="IQ36AdaptiveTop128HotAttentionGQA" type="SimpleGPU" version="1">
+  <Kernel entry="iq36_adaptive_attention">
+    <Source filename="iq36_hot_attention_tiled_helpers.cl"/>
+    <Source filename="iq36_prefill_microkernel_shims.cl"/>
+    <Source filename="iq36_prefill_attention_tiled.cl"/>
+    <Source filename="iq36_hot_attention_single_owner.cl"/>
+    <Source filename="iq36_adaptive_attention_decode.cl"/>
+  </Kernel>
+  <Buffers>
+    <Tensor arg-index="0" type="input" port-index="0" format="BFYX"/>
+    <Tensor arg-index="1" type="input" port-index="1" format="BFYX"/>
+    <Tensor arg-index="2" type="input" port-index="2" format="BFYX"/>
+    <Tensor arg-index="3" type="input" port-index="3" format="BFYX"/>
+    <Tensor arg-index="4" type="input" port-index="4" format="BFYX"/>
+    <Tensor arg-index="5" type="input" port-index="5" format="BFYX"/>
+    <Tensor arg-index="6" type="input" port-index="6" format="BFYX"/>
+    <Tensor arg-index="7" type="input" port-index="7" format="BFYX"/>
+    <Tensor arg-index="8" type="input" port-index="8" format="BFYX"/>
+    <Tensor arg-index="9" type="input" port-index="9" format="BFYX"/>
+    <Tensor arg-index="10" type="input" port-index="10" format="BFYX"/>
+    <Tensor arg-index="11" type="input" port-index="11" format="BFYX"/>
+    <Tensor arg-index="12" type="input" port-index="12" format="BFYX"/>
+    <Tensor arg-index="13" type="output" port-index="0" format="BFYX"/>
+    <Tensor arg-index="14" type="output" port-index="1" format="BFYX"/>
+    <Tensor arg-index="15" type="output" port-index="2" format="BFYX"/>
+    <Tensor arg-index="16" type="output" port-index="3" format="BFYX"/>
+    <Tensor arg-index="17" type="output" port-index="4" format="BFYX"/>
+    <Tensor arg-index="18" type="output" port-index="5" format="BFYX"/>
+  </Buffers>
+  <CompilerOptions options="-cl-std=CL3.0 -cl-fp32-correctly-rounded-divide-sqrt -Dcl_intel_dot_accumulate -Dcl_intel_global_float_atomic -Dcl_intel_subgroup_matrix_multiply_accumulate -Dcl_intel_subgroup_split_matrix_multiply_accumulate -DIQ36_UNIFIED_SHAPE_SPECIALIZATION=1 -DIQ36_PREFILL_RUNTIME_LENGTH=1 -DIQ36_PREFILL_FULL_HISTORY=1 -DIQ36_PREFILL_USE_MICROKERNEL=1 -DIQ36_DIRECT_I8_FIXED_LAYOUT=1 -DIQ36_HOT_WINDOW=16384U -DIQ36_DIMENSION_MAJOR_VALUE_PLANE=1 -DIQ36_ADAPTIVE_ATTENTION_GRAPH=1 -DIQ36_ADAPTIVE_TOPK=128U"/>
+  <WorkSizes global="128,Y,B*F" local="128,1,1"/>
+</CustomLayer>
+<CustomLayer name="IQ36DirectI8Group4HotAttentionGQA" type="SimpleGPU" version="1">
+  <Kernel entry="iq36_hot_attention_single_owner">
+    <Source filename="iq36_hot_attention_tiled_helpers.cl"/>
+    <Source filename="iq36_prefill_microkernel_shims.cl"/>
+    <Source filename="iq36_prefill_attention_tiled.cl"/>
+    <Source filename="iq36_hot_attention_single_owner.cl"/>
+  </Kernel>
+  <Buffers>
+    <Tensor arg-index="0" type="input" port-index="0" format="BFYX"/>
+    <Tensor arg-index="1" type="input" port-index="1" format="BFYX"/>
+    <Tensor arg-index="2" type="input" port-index="2" format="BFYX"/>
+    <Tensor arg-index="3" type="input" port-index="3" format="BFYX"/>
+    <Tensor arg-index="4" type="input" port-index="4" format="BFYX"/>
+    <Tensor arg-index="5" type="input" port-index="5" format="BFYX"/>
+    <Tensor arg-index="6" type="input" port-index="6" format="BFYX"/>
+    <Tensor arg-index="7" type="input" port-index="7" format="BFYX"/>
+    <Tensor arg-index="8" type="input" port-index="8" format="BFYX"/>
+    <Tensor arg-index="9" type="input" port-index="9" format="BFYX"/>
+    <Tensor arg-index="10" type="input" port-index="10" format="BFYX"/>
+    <Tensor arg-index="11" type="input" port-index="11" format="BFYX"/>
+    <Tensor arg-index="12" type="input" port-index="12" format="BFYX"/>
+    <Tensor arg-index="13" type="output" port-index="0" format="BFYX"/>
+    <Tensor arg-index="14" type="output" port-index="1" format="BFYX"/>
+    <Tensor arg-index="15" type="output" port-index="2" format="BFYX"/>
+    <Tensor arg-index="16" type="output" port-index="3" format="BFYX"/>
+    <Tensor arg-index="17" type="output" port-index="4" format="BFYX"/>
+    <Tensor arg-index="18" type="output" port-index="5" format="BFYX"/>
+  </Buffers>
+  <CompilerOptions options="-cl-std=CL3.0 -cl-fp32-correctly-rounded-divide-sqrt -Dcl_intel_dot_accumulate -Dcl_intel_global_float_atomic -Dcl_intel_subgroup_matrix_multiply_accumulate -Dcl_intel_subgroup_split_matrix_multiply_accumulate -DIQ36_UNIFIED_SHAPE_SPECIALIZATION=1 -DIQ36_PREFILL_RUNTIME_LENGTH=1 -DIQ36_DIRECT_I8_FIXED_LAYOUT=1 -DIQ36_DIRECT_I8_GROUP4_FULL_COLD=1"/>
+  <WorkSizes global="128,Y,B*F" local="128,1,1"/>
+</CustomLayer>
+<CustomLayer name="IQ36DirectI8HybridK2V4HotAttentionGQA" type="SimpleGPU" version="1">
+  <Kernel entry="iq36_hot_attention_single_owner">
+    <Source filename="iq36_hot_attention_tiled_helpers.cl"/>
+    <Source filename="iq36_prefill_microkernel_shims.cl"/>
+    <Source filename="iq36_prefill_attention_tiled.cl"/>
+    <Source filename="iq36_hot_attention_single_owner.cl"/>
+  </Kernel>
+  <Buffers>
+    <Tensor arg-index="0" type="input" port-index="0" format="BFYX"/>
+    <Tensor arg-index="1" type="input" port-index="1" format="BFYX"/>
+    <Tensor arg-index="2" type="input" port-index="2" format="BFYX"/>
+    <Tensor arg-index="3" type="input" port-index="3" format="BFYX"/>
+    <Tensor arg-index="4" type="input" port-index="4" format="BFYX"/>
+    <Tensor arg-index="5" type="input" port-index="5" format="BFYX"/>
+    <Tensor arg-index="6" type="input" port-index="6" format="BFYX"/>
+    <Tensor arg-index="7" type="input" port-index="7" format="BFYX"/>
+    <Tensor arg-index="8" type="input" port-index="8" format="BFYX"/>
+    <Tensor arg-index="9" type="input" port-index="9" format="BFYX"/>
+    <Tensor arg-index="10" type="input" port-index="10" format="BFYX"/>
+    <Tensor arg-index="11" type="input" port-index="11" format="BFYX"/>
+    <Tensor arg-index="12" type="input" port-index="12" format="BFYX"/>
+    <Tensor arg-index="13" type="output" port-index="0" format="BFYX"/>
+    <Tensor arg-index="14" type="output" port-index="1" format="BFYX"/>
+    <Tensor arg-index="15" type="output" port-index="2" format="BFYX"/>
+    <Tensor arg-index="16" type="output" port-index="3" format="BFYX"/>
+    <Tensor arg-index="17" type="output" port-index="4" format="BFYX"/>
+    <Tensor arg-index="18" type="output" port-index="5" format="BFYX"/>
+  </Buffers>
+  <CompilerOptions options="-cl-std=CL3.0 -cl-fp32-correctly-rounded-divide-sqrt -Dcl_intel_dot_accumulate -Dcl_intel_global_float_atomic -Dcl_intel_subgroup_matrix_multiply_accumulate -Dcl_intel_subgroup_split_matrix_multiply_accumulate -DIQ36_UNIFIED_SHAPE_SPECIALIZATION=1 -DIQ36_PREFILL_RUNTIME_LENGTH=1 -DIQ36_DIRECT_I8_FIXED_LAYOUT=1 -DIQ36_DIRECT_I8_GROUP4_FULL_COLD=1 -DIQ36_DIRECT_I8_HYBRID_K2_V4=1"/>
+  <WorkSizes global="128,Y,B*F" local="128,1,1"/>
+</CustomLayer>
+<CustomLayer name="IQ36LinearConvSwish" type="SimpleGPU" version="1">
+  <Kernel entry="iq36_linear_conv_swish">
+    <Source filename="iq36_linear_conv_swish.cl"/>
+  </Kernel>
+  <Buffers>
+    <Tensor arg-index="0" type="input" port-index="0" format="BFYX"/>
+    <Tensor arg-index="1" type="input" port-index="1" format="BFYX"/>
+    <Tensor arg-index="2" type="input" port-index="2" format="BFYX"/>
+    <Tensor arg-index="3" type="output" port-index="0" format="BFYX"/>
+    <Tensor arg-index="4" type="output" port-index="1" format="BFYX"/>
+  </Buffers>
+  <CompilerOptions options="-cl-std=CL3.0"/>
+  <WorkSizes global="X,Y" local="128,1"/>
+</CustomLayer>
+<CustomLayer name="IQ36StateDecodeAttentionGQA" type="SimpleGPU" version="1">
+  <Kernel entry="iq36_hot_attention_single_owner">
+    <Source filename="iq36_hot_attention_tiled_helpers.cl"/>
+    <Source filename="iq36_prefill_state_update.cl"/>
+    <Source filename="iq36_hot_attention_single_owner.cl"/>
+  </Kernel>
+  <Buffers>
+    <Tensor arg-index="0" type="input" port-index="0" format="BFYX"/>
+    <Tensor arg-index="1" type="input" port-index="1" format="BFYX"/>
+    <Tensor arg-index="2" type="input" port-index="2" format="BFYX"/>
+    <Tensor arg-index="3" type="input" port-index="3" format="BFYX"/>
+    <Tensor arg-index="4" type="input" port-index="4" format="BFYX"/>
+    <Tensor arg-index="5" type="input" port-index="5" format="BFYX"/>
+    <Tensor arg-index="6" type="input" port-index="6" format="BFYX"/>
+    <Tensor arg-index="7" type="input" port-index="7" format="BFYX"/>
+    <Tensor arg-index="8" type="input" port-index="8" format="BFYX"/>
+    <Tensor arg-index="9" type="input" port-index="9" format="BFYX"/>
+    <Tensor arg-index="10" type="input" port-index="10" format="BFYX"/>
+    <Tensor arg-index="11" type="input" port-index="11" format="BFYX"/>
+    <Tensor arg-index="12" type="input" port-index="12" format="BFYX"/>
+    <Tensor arg-index="13" type="output" port-index="0" format="BFYX"/>
+    <Tensor arg-index="14" type="output" port-index="1" format="BFYX"/>
+    <Tensor arg-index="15" type="output" port-index="2" format="BFYX"/>
+    <Tensor arg-index="16" type="output" port-index="3" format="BFYX"/>
+    <Tensor arg-index="17" type="output" port-index="4" format="BFYX"/>
+    <Tensor arg-index="18" type="output" port-index="5" format="BFYX"/>
+  </Buffers>
+  <CompilerOptions options="-cl-std=CL3.0 -cl-fp32-correctly-rounded-divide-sqrt -DIQ36_UNIFIED_SHAPE_SPECIALIZATION=1"/>
+  <WorkSizes global="128,Y,B*F" local="128,1,1"/>
+</CustomLayer>
+<CustomLayer name="IQ36IfBridge" type="SimpleGPU" version="1">
+  <Kernel entry="iq36_if_bridge">
+    <Source filename="iq36_if_bridge.cl"/>
+  </Kernel>
+  <Buffers>
+    <Tensor arg-index="0" type="input" port-index="0" format="BFYX"/>
+    <Tensor arg-index="1" type="output" port-index="0" format="BFYX"/>
+  </Buffers>
+  <CompilerOptions options="-cl-std=CL3.0"/>
+  <WorkSizes global="X,Y,B*F"/>
+</CustomLayer>
+<CustomLayer name="IQ36InitialPrefillAttentionGQA" type="SimpleGPU" version="1">
+  <Kernel entry="iq36_prefill_attention_tiled">
+    <Source filename="iq36_hot_attention_tiled_helpers.cl"/>
+    <Source filename="iq36_prefill_microkernel_shims.cl"/>
+    <Source filename="iq36_prefill_attention_tiled.cl"/>
+  </Kernel>
+  <Buffers>
+    <Tensor arg-index="0" type="input" port-index="0" format="BFYX"/>
+    <Tensor arg-index="1" type="input" port-index="1" format="BFYX"/>
+    <Tensor arg-index="2" type="input" port-index="2" format="BFYX"/>
+    <Tensor arg-index="3" type="input" port-index="3" format="BFYX"/>
+    <Tensor arg-index="4" type="input" port-index="4" format="BFYX"/>
+    <Tensor arg-index="5" type="input" port-index="5" format="BFYX"/>
+    <Tensor arg-index="6" type="input" port-index="6" format="BFYX"/>
+    <Tensor arg-index="7" type="input" port-index="7" format="BFYX"/>
+    <Tensor arg-index="8" type="input" port-index="8" format="BFYX"/>
+    <Tensor arg-index="9" type="input" port-index="9" format="BFYX"/>
+    <Tensor arg-index="10" type="input" port-index="10" format="BFYX"/>
+    <Tensor arg-index="11" type="input" port-index="11" format="BFYX"/>
+    <Tensor arg-index="12" type="input" port-index="12" format="BFYX"/>
+    <Tensor arg-index="13" type="output" port-index="0" format="BFYX"/>
+    <Tensor arg-index="14" type="output" port-index="1" format="BFYX"/>
+    <Tensor arg-index="15" type="output" port-index="2" format="BFYX"/>
+    <Tensor arg-index="16" type="output" port-index="3" format="BFYX"/>
+    <Tensor arg-index="17" type="output" port-index="4" format="BFYX"/>
+  </Buffers>
+  <CompilerOptions options="-cl-std=CL3.0 -cl-fp32-correctly-rounded-divide-sqrt -Dcl_intel_dot_accumulate -Dcl_intel_global_float_atomic -Dcl_intel_subgroup_matrix_multiply_accumulate -Dcl_intel_subgroup_split_matrix_multiply_accumulate -DIQ36_BUILD_PREFILL=1 -DIQ36_PREFILL_FULL_HISTORY=1 -DIQ36_PREFILL_INITIAL=1 -DIQ36_PREFILL_USE_MICROKERNEL=1"/>
+  <WorkSizes global="128,Y,B*F" local="128,1,1"/>
+</CustomLayer>
+<CustomLayer name="IQ36ContinuationPrefillAttentionGQA" type="SimpleGPU" version="1">
+  <Kernel entry="iq36_prefill_attention_tiled">
+    <Source filename="iq36_hot_attention_tiled_helpers.cl"/>
+    <Source filename="iq36_prefill_attention_tiled.cl"/>
+  </Kernel>
+  <Buffers>
+    <Tensor arg-index="0" type="input" port-index="0" format="BFYX"/>
+    <Tensor arg-index="1" type="input" port-index="1" format="BFYX"/>
+    <Tensor arg-index="2" type="input" port-index="2" format="BFYX"/>
+    <Tensor arg-index="3" type="input" port-index="3" format="BFYX"/>
+    <Tensor arg-index="4" type="input" port-index="4" format="BFYX"/>
+    <Tensor arg-index="5" type="input" port-index="5" format="BFYX"/>
+    <Tensor arg-index="6" type="input" port-index="6" format="BFYX"/>
+    <Tensor arg-index="7" type="input" port-index="7" format="BFYX"/>
+    <Tensor arg-index="8" type="input" port-index="8" format="BFYX"/>
+    <Tensor arg-index="9" type="input" port-index="9" format="BFYX"/>
+    <Tensor arg-index="10" type="input" port-index="10" format="BFYX"/>
+    <Tensor arg-index="11" type="input" port-index="11" format="BFYX"/>
+    <Tensor arg-index="12" type="input" port-index="12" format="BFYX"/>
+    <Tensor arg-index="13" type="output" port-index="0" format="BFYX"/>
+    <Tensor arg-index="14" type="output" port-index="1" format="BFYX"/>
+    <Tensor arg-index="15" type="output" port-index="2" format="BFYX"/>
+    <Tensor arg-index="16" type="output" port-index="3" format="BFYX"/>
+    <Tensor arg-index="17" type="output" port-index="4" format="BFYX"/>
+  </Buffers>
+  <CompilerOptions options="-cl-std=CL3.0 -cl-fp32-correctly-rounded-divide-sqrt -DIQ36_BUILD_PREFILL=1 -DIQ36_PREFILL_FULL_HISTORY=1 -DIQ36_PREFILL_CONTINUATION=1"/>
+  <WorkSizes global="128,Y,B*F" local="128,1,1"/>
+</CustomLayer>
+<CustomLayer name="IQ36FixedFC1" type="SimpleGPU" version="1">
+  <Kernel entry="iq36_fixed_fc1">
+    <Source filename="iq36_fixed_fc_prefix.cl"/>
+    <Source filename="iq36_fixed_fc_microkernel_shim.cl"/>
+    <Source filename="iq36_fixed_fc_prefill_wide_microkernel_shim.cl"/>
+    <Source filename="iq36_fixed_fc_prefill_small_microkernel_shim.cl"/>
+    <Source filename="iq36_fixed_fc_multi_output.cl"/>
+    <Define name="IQ36_M0" param="m0" default="2048"/>
+    <Define name="IQ36_K" param="k" default="4096"/>
+  </Kernel>
+  <Buffers>
+    <Tensor arg-index="0" type="input" port-index="0" format="BFYX"/>
+    <Tensor arg-index="1" type="input" port-index="1" format="BFYX"/>
+    <Tensor arg-index="2" type="output" port-index="0" format="BFYX"/>
+    <Tensor arg-index="3" type="input" port-index="2" format="BFYX"/>
+    <Tensor arg-index="4" type="input" port-index="3" format="BFYX"/>
+    <Tensor arg-index="5" type="input" port-index="4" format="BFYX"/>
+  </Buffers>
+  <CompilerOptions options="-cl-std=CL2.0 -cl-intel-256-GRF-per-thread -Dcl_intel_dot_accumulate -Dcl_intel_global_float_atomic -Dcl_intel_subgroup_matrix_multiply_accumulate -Dcl_intel_subgroup_split_matrix_multiply_accumulate -DIQ36_ARITY=1"/>
+  <WorkSizes dim="input,4" global="X,1,8" local="32,1,8"/>
+</CustomLayer>
+<CustomLayer name="IQ36FixedFC3" type="SimpleGPU" version="1">
+  <Kernel entry="iq36_fixed_fc3">
+    <Source filename="iq36_fixed_fc_prefix.cl"/>
+    <Source filename="iq36_fixed_fc_microkernel_shim.cl"/>
+    <Source filename="iq36_fixed_fc_prefill_wide_microkernel_shim.cl"/>
+    <Source filename="iq36_fixed_fc_prefill_small_microkernel_shim.cl"/>
+    <Source filename="iq36_fixed_fc_multi_output.cl"/>
+    <Define name="IQ36_M0" param="m0" default="8192"/>
+    <Define name="IQ36_M1" param="m1" default="512"/>
+    <Define name="IQ36_M2" param="m2" default="512"/>
+    <Define name="IQ36_K" param="k" default="2048"/>
+  </Kernel>
+  <Buffers>
+    <Tensor arg-index="0" type="input" port-index="0" format="BFYX"/>
+    <Tensor arg-index="1" type="input" port-index="1" format="BFYX"/>
+    <Tensor arg-index="2" type="output" port-index="0" format="BFYX"/>
+    <Tensor arg-index="3" type="input" port-index="2" format="BFYX"/>
+    <Tensor arg-index="4" type="input" port-index="3" format="BFYX"/>
+    <Tensor arg-index="5" type="input" port-index="4" format="BFYX"/>
+    <Tensor arg-index="6" type="output" port-index="1" format="BFYX"/>
+    <Tensor arg-index="7" type="input" port-index="5" format="BFYX"/>
+    <Tensor arg-index="8" type="input" port-index="6" format="BFYX"/>
+    <Tensor arg-index="9" type="input" port-index="7" format="BFYX"/>
+    <Tensor arg-index="10" type="output" port-index="2" format="BFYX"/>
+    <Tensor arg-index="11" type="input" port-index="8" format="BFYX"/>
+    <Tensor arg-index="12" type="input" port-index="9" format="BFYX"/>
+    <Tensor arg-index="13" type="input" port-index="10" format="BFYX"/>
+  </Buffers>
+  <CompilerOptions options="-cl-std=CL2.0 -cl-intel-256-GRF-per-thread -Dcl_intel_dot_accumulate -Dcl_intel_global_float_atomic -Dcl_intel_subgroup_matrix_multiply_accumulate -Dcl_intel_subgroup_split_matrix_multiply_accumulate -DIQ36_ARITY=3"/>
+  <WorkSizes dim="input,10" global="X,1,8" local="32,1,8"/>
+</CustomLayer>
+<CustomLayer name="IQ36FixedFC4" type="SimpleGPU" version="1">
+  <Kernel entry="iq36_fixed_fc4">
+    <Source filename="iq36_fixed_fc_prefix.cl"/>
+    <Source filename="iq36_fixed_fc_microkernel_shim.cl"/>
+    <Source filename="iq36_fixed_fc_prefill_wide_microkernel_shim.cl"/>
+    <Source filename="iq36_fixed_fc_prefill_small_microkernel_shim.cl"/>
+    <Source filename="iq36_fixed_fc_multi_output.cl"/>
+    <Define name="IQ36_M0" param="m0" default="8192"/>
+    <Define name="IQ36_M1" param="m1" default="32"/>
+    <Define name="IQ36_M2" param="m2" default="32"/>
+    <Define name="IQ36_M3" param="m3" default="4096"/>
+    <Define name="IQ36_K" param="k" default="2048"/>
+  </Kernel>
+  <Buffers>
+    <Tensor arg-index="0" type="input" port-index="0" format="BFYX"/>
+    <Tensor arg-index="1" type="input" port-index="1" format="BFYX"/>
+    <Tensor arg-index="2" type="output" port-index="0" format="BFYX"/>
+    <Tensor arg-index="3" type="input" port-index="2" format="BFYX"/>
+    <Tensor arg-index="4" type="input" port-index="3" format="BFYX"/>
+    <Tensor arg-index="5" type="input" port-index="4" format="BFYX"/>
+    <Tensor arg-index="6" type="output" port-index="1" format="BFYX"/>
+    <Tensor arg-index="7" type="input" port-index="5" format="BFYX"/>
+    <Tensor arg-index="8" type="input" port-index="6" format="BFYX"/>
+    <Tensor arg-index="9" type="input" port-index="7" format="BFYX"/>
+    <Tensor arg-index="10" type="output" port-index="2" format="BFYX"/>
+    <Tensor arg-index="11" type="input" port-index="8" format="BFYX"/>
+    <Tensor arg-index="12" type="input" port-index="9" format="BFYX"/>
+    <Tensor arg-index="13" type="input" port-index="10" format="BFYX"/>
+    <Tensor arg-index="14" type="output" port-index="3" format="BFYX"/>
+    <Tensor arg-index="15" type="input" port-index="11" format="BFYX"/>
+    <Tensor arg-index="16" type="input" port-index="12" format="BFYX"/>
+    <Tensor arg-index="17" type="input" port-index="13" format="BFYX"/>
+  </Buffers>
+  <CompilerOptions options="-cl-std=CL2.0 -cl-intel-256-GRF-per-thread -Dcl_intel_dot_accumulate -Dcl_intel_global_float_atomic -Dcl_intel_subgroup_matrix_multiply_accumulate -Dcl_intel_subgroup_split_matrix_multiply_accumulate -DIQ36_ARITY=4"/>
+  <WorkSizes dim="input,13" global="X,1,8" local="32,1,8"/>
+</CustomLayer>

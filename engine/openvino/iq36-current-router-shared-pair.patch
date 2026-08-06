@@ -1,0 +1,38 @@
+diff --git a/src/plugins/intel_gpu/src/plugin/transformations/fc_horizontal_fusion.cpp b/src/plugins/intel_gpu/src/plugin/transformations/fc_horizontal_fusion.cpp
+--- a/src/plugins/intel_gpu/src/plugin/transformations/fc_horizontal_fusion.cpp
++++ b/src/plugins/intel_gpu/src/plugin/transformations/fc_horizontal_fusion.cpp
+@@ -42,6 +42,11 @@ bool router_shared_triple_enabled() {
+     return value && std::string(value) == "1";
+ }
+ 
++bool router_shared_pair_enabled() {
++    const char* value = std::getenv("IQ36_ROUTER_SHARED_PAIR");
++    return value && std::string(value) == "1";
++}
++
+ CompressedFCVector get_compressed_fc_users(const std::shared_ptr<Node>& input) {
+     CompressedFCVector candidates;
+     for (const auto& user : input->get_users()) {
+@@ -53,7 +58,11 @@ CompressedFCVector get_compressed_fc_users(const std::shared_ptr<Node>& input) {
+ 
+ CompressedFCVector get_locked_router_shared_fanout(const std::shared_ptr<Node>& input) {
+     auto candidates = get_compressed_fc_users(input);
+-    if (fixed_m1024_scope_enabled() == router_shared_triple_enabled())
++    const size_t enabled_routes =
++        static_cast<size_t>(fixed_m1024_scope_enabled()) +
++        static_cast<size_t>(router_shared_triple_enabled()) +
++        static_cast<size_t>(router_shared_pair_enabled());
++    if (enabled_routes != 1)
+         return {};
+ 
+     // The locked fanout has four K=2048 FCs with N=[1, 512, 512, 256].
+@@ -99,7 +108,8 @@ CompressedFCVector get_horizontal_fusion_candidates(const std::shared_ptr<Node>&
+     for (const auto& fc : locked_fanout) {
+         const auto n = fc->get_input_shape(1)[0];
+         if ((router_shared_triple_enabled() && n != 256) ||
+-            (fixed_m1024_scope_enabled() && n == 512)) {
++            ((fixed_m1024_scope_enabled() || router_shared_pair_enabled()) &&
++             n == 512)) {
+             shared_expert_candidates.push_back(fc);
+         }
+     }

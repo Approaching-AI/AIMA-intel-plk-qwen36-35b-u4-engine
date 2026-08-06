@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "intel-qwen36-server"
+version = "0.1.0"
+description = "Resident OpenAI-compatible HTTP service for the locked Qwen3.6 OpenVINO U4 engine"
+readme = "engine/service/README.md"
+requires-python = ">=3.12,<3.13"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+dependencies = [
+  "h11==0.16.0",
+  "jsonschema==4.26.0",
+  "numpy==2.4.4",
+  "openvino==2026.2.0rc2",
+  "openvino-genai==2026.2.0.0rc2",
+  "openvino-telemetry==2025.2.0",
+  "openvino-tokenizers==2026.2.0.0rc2",
+]
+
+[project.urls]
+Homepage = "https://github.com/Approaching-AI/AIMA-intel-plk-qwen36-35b-u4-engine"
+Repository = "https://github.com/Approaching-AI/AIMA-intel-plk-qwen36-35b-u4-engine"
+Issues = "https://github.com/Approaching-AI/AIMA-intel-plk-qwen36-35b-u4-engine/issues"
+
+[project.optional-dependencies]
+compat = ["openai==2.53.0"]
+release = ["pip-audit==2.10.1"]
+
+[project.scripts]
+iq36-serve = "iq36_server.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "engine/service"}
+
+[tool.setuptools.packages.find]
+where = ["engine/service"]
+include = ["iq36_server*"]

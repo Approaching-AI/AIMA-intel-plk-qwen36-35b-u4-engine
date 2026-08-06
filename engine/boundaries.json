@@ -1,0 +1,483 @@
+{
+  "schema_version": "intel-qwen36-boundaries-v1",
+  "workstream": "intel-qwen36-35b-a3b-gguf-q4km",
+  "note": "SSOT for engine compare boundaries. Drives engine/CMakeLists.txt (foreach), tools/iq36-ladder.py rollup, and validate_repo.py. Add a boundary HERE, not in CMake + driver + contract + validate separately. Test sources are relative to engine/.",
+  "infra_targets": [
+    {
+      "target": "iq36-self-test",
+      "source": "tests/self_test.cpp"
+    },
+    {
+      "target": "iq36-load-bundle",
+      "source": "tests/load_bundle.cpp"
+    },
+    {
+      "target": "iq36-gguf-inspect",
+      "source": "tests/gguf_inspect.cpp"
+    },
+    {
+      "target": "iq36-seed-prompt-input-check",
+      "source": "tests/seed_prompt_input_check.cpp"
+    },
+    {
+      "target": "iq36-native-candidate-jsonl",
+      "source": "tests/native_candidate_jsonl.cpp"
+    },
+    {
+      "target": "iq36-grouped-s8-u4-prefill-runtime",
+      "source": "tools/grouped_s8_u4_prefill_runtime.cpp"
+    },
+    {
+      "target": "iq36-grouped-s8-u4-prefill-resident-smoke",
+      "source": "tools/grouped_s8_u4_prefill_resident_smoke.cpp"
+    },
+    {
+      "target": "iq36-grouped-s8-u4-prefill-multilayer-load-smoke",
+      "source": "tools/grouped_s8_u4_prefill_multilayer_load_smoke.cpp"
+    },
+    {
+      "target": "iq36-grouped-s8-u4-prefill-schedule-envelope-smoke",
+      "source": "tools/grouped_s8_u4_prefill_schedule_envelope_smoke.cpp"
+    },
+    {
+      "target": "iq36-grouped-s8-u8-q6-prefill-resident-smoke",
+      "source": "tools/grouped_s8_u8_q6_prefill_resident_smoke.cpp"
+    },
+    {
+      "target": "iq36-grouped-s8-u8-q6-surrogate-down",
+      "source": "tools/grouped_s8_u8_q6_surrogate_down.cpp"
+    },
+    {
+      "target": "iq36-grouped-s8-u8-q6-prefill-schedule-envelope-smoke",
+      "source": "tools/grouped_s8_u8_q6_prefill_schedule_envelope_smoke.cpp"
+    },
+    {
+      "target": "iq36-grouped-mixed-prefill-all-layer-load-smoke",
+      "source": "tools/grouped_mixed_prefill_all_layer_load_smoke.cpp"
+    },
+    {
+      "target": "iq36-grouped-mixed-prefill-all-layer-compare",
+      "source": "tools/grouped_mixed_prefill_all_layer_compare.cpp"
+    },
+    {
+      "target": "iq36-native-carrier-loop-smoke",
+      "source": "tools/native_carrier_loop_smoke.cpp"
+    },
+    {
+      "target": "iq36-packed-token-schedule-smoke",
+      "source": "tools/packed_token_schedule_smoke.cpp"
+    },
+    {
+      "target": "iq36-packed-token-level-zero-probe",
+      "source": "tools/packed_token_level_zero_probe.cpp"
+    },
+    {
+      "target": "iq36-level-zero-real-carrier-smoke",
+      "source": "tools/level_zero_real_carrier_smoke.cpp"
+    },
+    {
+      "target": "iq36-level-zero-indexed-q6-down-smoke",
+      "source": "tools/level_zero_indexed_q6_down_smoke.cpp"
+    },
+    {
+      "target": "iq36-packed-token-level-zero-backend-smoke",
+      "source": "tools/packed_token_level_zero_backend_smoke.cpp"
+    },
+    {
+      "target": "iq36-fused-gqa-fp16-kv-decode",
+      "source": "tools/fused_gqa_fp16_kv_decode.cpp"
+    },
+    {
+      "target": "iq36-exact-score-staging-component",
+      "source": "tools/exact_score_staging_component.cpp"
+    },
+    {
+      "target": "iq36-exact-attention-vrt160-component",
+      "source": "tools/exact_attention_vrt160_component.cpp"
+    },
+    {
+      "target": "iq36-compressed-gqa-i8-kv-decode",
+      "source": "tools/compressed_gqa_i8_kv_decode.cpp"
+    },
+    {
+      "target": "iq36-direct-i8-hotcold-gqa-decode",
+      "source": "tools/direct_i8_hotcold_gqa_decode.cpp"
+    },
+    {
+      "target": "iq36-direct-i8-group4-hotcold-gqa-decode",
+      "source": "tools/direct_i8_hotcold_gqa_decode.cpp",
+      "compile_definitions": [
+        "IQ36_COMPONENT_QUANT_GROUP=4"
+      ]
+    },
+    {
+      "target": "iq36-direct-i8-hybrid-k2-v4-hotcold-gqa-decode",
+      "source": "tools/direct_i8_hotcold_gqa_decode.cpp",
+      "compile_definitions": [
+        "IQ36_COMPONENT_KEY_QUANT_GROUP=2",
+        "IQ36_COMPONENT_VALUE_QUANT_GROUP=4"
+      ]
+    },
+    {
+      "target": "iq36-direct-i8-hybrid-k2-v4-hot16k-split-state-owner-gqa-decode",
+      "source": "tools/direct_i8_hotcold_gqa_decode.cpp",
+      "compile_definitions": [
+        "IQ36_COMPONENT_KEY_QUANT_GROUP=2",
+        "IQ36_COMPONENT_VALUE_QUANT_GROUP=4",
+        "IQ36_COMPONENT_HOT_TOKENS=16384",
+        "IQ36_COMPONENT_UPDATE_AFTER_ATTENTION=1"
+      ]
+    },
+    {
+      "target": "iq36-direct-i8-hybrid-k2-v4-hot16k-storage-specialized-gqa-decode",
+      "source": "tools/direct_i8_hotcold_gqa_decode.cpp",
+      "compile_definitions": [
+        "IQ36_COMPONENT_KEY_QUANT_GROUP=2",
+        "IQ36_COMPONENT_VALUE_QUANT_GROUP=4",
+        "IQ36_COMPONENT_HOT_TOKENS=16384",
+        "IQ36_COMPONENT_UPDATE_AFTER_ATTENTION=1",
+        "IQ36_COMPONENT_STORAGE_SPECIALIZED=1"
+      ]
+    },
+    {
+      "target": "iq36-adaptive-i8-hotcold-gqa-decode-top512",
+      "source": "tools/adaptive_i8_hotcold_gqa_decode.cpp",
+      "compile_definitions": [
+        "IQ36_ADAPTIVE_COMPONENT_TOPK=512"
+      ]
+    },
+    {
+      "target": "iq36-adaptive-i8-hotcold-gqa-decode-top256",
+      "source": "tools/adaptive_i8_hotcold_gqa_decode.cpp",
+      "compile_definitions": [
+        "IQ36_ADAPTIVE_COMPONENT_TOPK=256"
+      ]
+    },
+    {
+      "target": "iq36-packed-gqa-i6-kv-decode",
+      "source": "tools/packed_gqa_i6_kv_decode.cpp"
+    },
+    {
+      "target": "iq36-scaled-e4m3-gqa-kv-decode",
+      "source": "tools/compressed_gqa_i8_kv_decode.cpp"
+    },
+    {
+      "target": "iq36-cpu-avx2-fp16-gqa-decode",
+      "source": "tools/cpu_avx2_fp16_gqa_decode.cpp"
+    },
+    {
+      "target": "iq36-grouped-prefill-device-schedule-probe",
+      "source": "tools/grouped_prefill_device_schedule_probe.cpp"
+    },
+    {
+      "target": "iq36-native-router-prefill-probe",
+      "source": "tools/native_router_prefill_probe.cpp"
+    },
+    {
+      "target": "iq36-linear-attention-prefill-state-probe",
+      "source": "tools/linear_attention_prefill_state_probe.cpp"
+    },
+    {
+      "target": "iq36-f16-dpas-prefill-preflight",
+      "source": "tools/f16_dpas_prefill_preflight.cpp"
+    },
+    {
+      "target": "iq36-openvino-moe-micro-runtime",
+      "source": "tools/openvino_moe_micro_runtime.cpp"
+    },
+    {
+      "target": "iq36-openvino-fc-micro-runtime",
+      "source": "tools/openvino_fc_micro_runtime.cpp"
+    },
+    {
+      "target": "iq36-openvino-fc-multi-output-runtime",
+      "source": "tools/openvino_fc_multi_output_runtime.cpp"
+    },
+    {
+      "target": "iq36-openvino-lm-head-i8q4-component",
+      "source": "tools/openvino_lm_head_i8q4_component.cpp"
+    },
+    {
+      "target": "iq36-openvino-lm-head-gated-exact-component",
+      "source": "tools/openvino_lm_head_gated_exact_component.cpp"
+    },
+    {
+      "target": "iq36-openvino-lm-head-affine-q4-group128-component",
+      "source": "tools/openvino_lm_head_affine_q4_group128_component.cpp"
+    }
+  ],
+  "boundaries": [
+    {
+      "id": "embedding",
+      "target": "iq36-embedding-compare",
+      "source": "tests/embedding_compare.cpp",
+      "driver": "tools/intel-qwen36-r1-engine-embedding-compare.py",
+      "artifact_prefix": "r1-engine-embedding-compare",
+      "gate": "r1_native_gguf_correctness_first_token_loop"
+    },
+    {
+      "id": "rmsnorm",
+      "target": "iq36-rmsnorm-compare",
+      "source": "tests/rmsnorm_compare.cpp",
+      "driver": "tools/intel-qwen36-r1-engine-rmsnorm-compare.py",
+      "artifact_prefix": "r1-engine-rmsnorm-compare",
+      "gate": "r1_native_gguf_correctness_first_token_loop"
+    },
+    {
+      "id": "qkv",
+      "target": "iq36-qkv-compare",
+      "source": "tests/qkv_compare.cpp",
+      "driver": "tools/intel-qwen36-r1-engine-qkv-compare.py",
+      "artifact_prefix": "r1-engine-qkv-compare",
+      "gate": "r1_native_gguf_correctness_first_token_loop"
+    },
+    {
+      "id": "attn-output",
+      "target": "iq36-attn-output-compare",
+      "source": "tests/attn_output_compare.cpp",
+      "driver": "tools/intel-qwen36-r1-engine-attn-output-compare.py",
+      "artifact_prefix": "r1-engine-attn-output-compare",
+      "gate": "r1_native_gguf_correctness_first_token_loop"
+    },
+    {
+      "id": "linear-attn-delta",
+      "target": "iq36-linear-attn-delta-compare",
+      "source": "tests/linear_attn_delta_compare.cpp",
+      "driver": "tools/intel-qwen36-r1-engine-linear-attn-delta-compare.py",
+      "artifact_prefix": "r1-engine-linear-attn-delta-compare",
+      "gate": "r1_native_gguf_correctness_first_token_loop"
+    },
+    {
+      "id": "linear-attn-preconv",
+      "target": "iq36-linear-attn-preconv-compare",
+      "source": "tests/linear_attn_preconv_compare.cpp",
+      "driver": "tools/intel-qwen36-r1-engine-linear-attn-preconv-compare.py",
+      "artifact_prefix": "r1-engine-linear-attn-preconv-compare",
+      "gate": "r1_native_gguf_correctness_first_token_loop"
+    },
+    {
+      "id": "linear-attn-conv",
+      "target": "iq36-linear-attn-conv-compare",
+      "source": "tests/linear_attn_conv_compare.cpp",
+      "driver": "tools/intel-qwen36-r1-engine-linear-attn-conv-compare.py",
+      "artifact_prefix": "r1-engine-linear-attn-conv-compare",
+      "gate": "r1_native_gguf_correctness_first_token_loop"
+    },
+    {
+      "id": "linear-attn-postconv",
+      "target": "iq36-linear-attn-postconv-compare",
+      "source": "tests/linear_attn_postconv_compare.cpp",
+      "driver": "tools/intel-qwen36-r1-engine-linear-attn-postconv-compare.py",
+      "artifact_prefix": "r1-engine-linear-attn-postconv-compare",
+      "gate": "r1_native_gguf_correctness_first_token_loop"
+    },
+    {
+      "id": "linear-attn-all-postconv",
+      "target": "iq36-linear-attn-all-postconv-compare",
+      "source": "tests/linear_attn_all_postconv_compare.cpp",
+      "driver": "tools/intel-qwen36-r1-engine-linear-attn-all-postconv-compare.py",
+      "artifact_prefix": "r1-engine-linear-attn-all-postconv-compare",
+      "gate": "r1_native_gguf_correctness_first_token_loop"
+    },
+    {
+      "id": "attn-residual",
+      "target": "iq36-attn-residual-compare",
+      "source": "tests/attn_residual_compare.cpp",
+      "driver": "tools/intel-qwen36-r1-engine-attn-residual-compare.py",
+      "artifact_prefix": "r1-engine-attn-residual-compare",
+      "gate": "r1_native_gguf_correctness_first_token_loop"
+    },
+    {
+      "id": "ffn-rmsnorm",
+      "target": "iq36-ffn-rmsnorm-compare",
+      "source": "tests/ffn_rmsnorm_compare.cpp",
+      "driver": "tools/intel-qwen36-r1-engine-ffn-rmsnorm-compare.py",
+      "artifact_prefix": "r1-engine-ffn-rmsnorm-compare",
+      "gate": "r1_native_gguf_correctness_first_token_loop"
+    },
+    {
+      "id": "router-logits",
+      "target": "iq36-router-logits-compare",
+      "source": "tests/router_logits_compare.cpp",
+      "driver": "tools/intel-qwen36-r1-engine-router-logits-compare.py",
+      "artifact_prefix": "r1-engine-router-logits-compare",
+      "gate": "r1_native_gguf_correctness_first_token_loop"
+    },
+    {
+      "id": "router-topk",
+      "target": "iq36-router-topk-compare",
+      "source": "tests/router_topk_compare.cpp",
+      "driver": "tools/intel-qwen36-r1-engine-router-topk-compare.py",
+      "artifact_prefix": "r1-engine-router-topk-compare",
+      "gate": "r1_native_gguf_correctness_first_token_loop"
+    },
+    {
+      "id": "selected-expert-gate-up",
+      "target": "iq36-selected-expert-gate-up-compare",
+      "source": "tests/selected_expert_gate_up_compare.cpp",
+      "driver": "tools/intel-qwen36-r1-engine-selected-expert-gate-up-compare.py",
+      "artifact_prefix": "r1-engine-selected-expert-gate-up-compare",
+      "gate": "r1_native_gguf_correctness_first_token_loop"
+    },
+    {
+      "id": "swiglu",
+      "target": "iq36-swiglu-compare",
+      "source": "tests/swiglu_compare.cpp",
+      "driver": "tools/intel-qwen36-r1-engine-swiglu-compare.py",
+      "artifact_prefix": "r1-engine-swiglu-compare",
+      "gate": "r1_native_gguf_correctness_first_token_loop"
+    },
+    {
+      "id": "selected-expert-down",
+      "target": "iq36-selected-expert-down-compare",
+      "source": "tests/selected_expert_down_compare.cpp",
+      "driver": "tools/intel-qwen36-r1-engine-selected-expert-down-compare.py",
+      "artifact_prefix": "r1-engine-selected-expert-down-compare",
+      "gate": "r1_native_gguf_correctness_first_token_loop"
+    },
+    {
+      "id": "shared-expert",
+      "target": "iq36-shared-expert-compare",
+      "source": "tests/shared_expert_compare.cpp",
+      "driver": "tools/intel-qwen36-r1-engine-shared-expert-compare.py",
+      "artifact_prefix": "r1-engine-shared-expert-compare",
+      "gate": "r1_native_gguf_correctness_first_token_loop"
+    },
+    {
+      "id": "moe-residual",
+      "target": "iq36-moe-residual-compare",
+      "source": "tests/moe_residual_compare.cpp",
+      "driver": "tools/intel-qwen36-r1-engine-moe-residual-compare.py",
+      "artifact_prefix": "r1-engine-moe-residual-compare",
+      "gate": "r1_native_gguf_correctness_first_token_loop"
+    },
+    {
+      "id": "ffn-block",
+      "target": "iq36-ffn-block-compare",
+      "source": "tests/ffn_block_compare.cpp",
+      "driver": "tools/intel-qwen36-r1-engine-ffn-block-compare.py",
+      "artifact_prefix": "r1-engine-ffn-block-compare",
+      "gate": "r1_native_gguf_correctness_first_token_loop"
+    },
+    {
+      "id": "layer-shell",
+      "target": "iq36-layer-shell-compare",
+      "source": "tests/layer_shell_compare.cpp",
+      "driver": "tools/intel-qwen36-r1-engine-layer-shell-compare.py",
+      "artifact_prefix": "r1-engine-layer-shell-compare",
+      "gate": "r1_native_gguf_correctness_first_token_loop"
+    },
+    {
+      "id": "layer-postconv",
+      "target": "iq36-layer-postconv-compare",
+      "source": "tests/layer_postconv_compare.cpp",
+      "driver": "tools/intel-qwen36-r1-engine-layer-postconv-compare.py",
+      "artifact_prefix": "r1-engine-layer-postconv-compare",
+      "gate": "r1_native_gguf_correctness_first_token_loop"
+    },
+    {
+      "id": "layer-stateful-linear-attn",
+      "target": "iq36-layer-stateful-linear-attn-compare",
+      "source": "tests/layer_stateful_linear_attn_compare.cpp",
+      "driver": "tools/intel-qwen36-r1-engine-layer-stateful-linear-attn-compare.py",
+      "artifact_prefix": "r1-engine-layer-stateful-linear-attn-compare",
+      "gate": "r1_native_gguf_correctness_first_token_loop"
+    },
+    {
+      "id": "two-linear-layers-stateful",
+      "target": "iq36-two-linear-layers-stateful-compare",
+      "source": "tests/two_linear_layers_stateful_compare.cpp",
+      "driver": "tools/intel-qwen36-r1-engine-two-linear-layers-stateful-compare.py",
+      "artifact_prefix": "r1-engine-two-linear-layers-stateful-compare",
+      "gate": "r1_native_gguf_correctness_first_token_loop"
+    },
+    {
+      "id": "full-attn-qkv",
+      "target": "iq36-full-attn-qkv-compare",
+      "source": "tests/full_attn_qkv_compare.cpp",
+      "driver": "tools/intel-qwen36-r1-engine-full-attn-qkv-compare.py",
+      "artifact_prefix": "r1-engine-full-attn-qkv-compare",
+      "gate": "r1_native_gguf_correctness_first_token_loop"
+    },
+    {
+      "id": "full-attn-rope",
+      "target": "iq36-full-attn-rope-compare",
+      "source": "tests/full_attn_rope_compare.cpp",
+      "driver": "tools/intel-qwen36-r1-engine-full-attn-rope-compare.py",
+      "artifact_prefix": "r1-engine-full-attn-rope-compare",
+      "gate": "r1_native_gguf_correctness_first_token_loop"
+    },
+    {
+      "id": "full-attn-core",
+      "target": "iq36-full-attn-core-compare",
+      "source": "tests/full_attn_core_compare.cpp",
+      "driver": "tools/intel-qwen36-r1-engine-full-attn-core-compare.py",
+      "artifact_prefix": "r1-engine-full-attn-core-compare",
+      "gate": "r1_native_gguf_correctness_first_token_loop"
+    },
+    {
+      "id": "full-attn-stateful-layer",
+      "target": "iq36-full-attn-stateful-layer-compare",
+      "source": "tests/full_attn_stateful_layer_compare.cpp",
+      "driver": "tools/intel-qwen36-r1-engine-full-attn-stateful-layer-compare.py",
+      "artifact_prefix": "r1-engine-full-attn-stateful-layer-compare",
+      "gate": "r1_native_gguf_correctness_first_token_loop"
+    },
+    {
+      "id": "full-attn-all-stateful-layers",
+      "target": "iq36-full-attn-all-stateful-layers-compare",
+      "source": "tests/full_attn_all_stateful_layers_compare.cpp",
+      "driver": "tools/intel-qwen36-r1-engine-full-attn-all-stateful-layers-compare.py",
+      "artifact_prefix": "r1-engine-full-attn-all-stateful-layers-compare",
+      "gate": "r1_native_gguf_correctness_first_token_loop"
+    },
+    {
+      "id": "full-attn-gate",
+      "target": "iq36-full-attn-gate-compare",
+      "source": "tests/full_attn_gate_compare.cpp",
+      "driver": "tools/intel-qwen36-r1-engine-full-attn-gate-compare.py",
+      "artifact_prefix": "r1-engine-full-attn-gate-compare",
+      "gate": "r1_native_gguf_correctness_first_token_loop"
+    },
+    {
+      "id": "full-attn-output-projection",
+      "target": "iq36-full-attn-output-projection-compare",
+      "source": "tests/full_attn_output_projection_compare.cpp",
+      "driver": "tools/intel-qwen36-r1-engine-full-attn-output-projection-compare.py",
+      "artifact_prefix": "r1-engine-full-attn-output-projection-compare",
+      "gate": "r1_native_gguf_correctness_first_token_loop"
+    },
+    {
+      "id": "loop-shell",
+      "target": "iq36-loop-shell-compare",
+      "source": "tests/loop_shell_compare.cpp",
+      "driver": "tools/intel-qwen36-r1-engine-loop-shell-compare.py",
+      "artifact_prefix": "r1-engine-loop-shell-compare",
+      "gate": "r1_native_gguf_correctness_first_token_loop"
+    },
+    {
+      "id": "final-norm",
+      "target": "iq36-final-norm-compare",
+      "source": "tests/final_norm_compare.cpp",
+      "driver": "tools/intel-qwen36-r1-engine-final-norm-compare.py",
+      "artifact_prefix": "r1-engine-final-norm-compare",
+      "gate": "r1_native_gguf_correctness_first_token_loop"
+    },
+    {
+      "id": "lm-head",
+      "target": "iq36-lm-head-compare",
+      "source": "tests/lm_head_compare.cpp",
+      "driver": "tools/intel-qwen36-r1-engine-lm-head-compare.py",
+      "artifact_prefix": "r1-engine-lm-head-compare",
+      "gate": "r1_native_gguf_correctness_first_token_loop"
+    },
+    {
+      "id": "sampler",
+      "target": "iq36-sampler-compare",
+      "source": "tests/sampler_compare.cpp",
+      "driver": "tools/intel-qwen36-r1-engine-sampler-compare.py",
+      "artifact_prefix": "r1-engine-sampler-compare",
+      "gate": "r1_native_gguf_correctness_first_token_loop"
+    }
+  ]
+}

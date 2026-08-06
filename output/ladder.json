@@ -1,0 +1,352 @@
+{
+  "schema_version": "intel-qwen36-ladder-v1",
+  "workstream": "intel-qwen36-35b-a3b-gguf-q4km",
+  "selector_gate": "r1_native_gguf_correctness_first_token_loop",
+  "boundary_count": 34,
+  "passed_count": 33,
+  "all_present": true,
+  "all_passed": false,
+  "note": "Component compares only. R1 native token gate closure is recorded by the latest r1-native-candidate-jsonl artifact and STATUS.md; a component pass is not a speed claim.",
+  "boundaries": [
+    {
+      "id": "embedding",
+      "target": "iq36-embedding-compare",
+      "artifact_prefix": "r1-engine-embedding-compare",
+      "artifact": "output/r1-engine-embedding-compare-20260627T070555Z",
+      "passed": true,
+      "gate": "r1_engine_embedding_compare",
+      "r1_native_correctness_gate_closed": false,
+      "status": "pass"
+    },
+    {
+      "id": "rmsnorm",
+      "target": "iq36-rmsnorm-compare",
+      "artifact_prefix": "r1-engine-rmsnorm-compare",
+      "artifact": "output/r1-engine-rmsnorm-compare-20260627T071636Z",
+      "passed": true,
+      "gate": "r1_engine_rmsnorm_compare",
+      "r1_native_correctness_gate_closed": false,
+      "status": "pass"
+    },
+    {
+      "id": "qkv",
+      "target": "iq36-qkv-compare",
+      "artifact_prefix": "r1-engine-qkv-compare",
+      "artifact": "output/r1-engine-qkv-compare-20260627T073405Z",
+      "passed": true,
+      "gate": "r1_engine_qkv_compare",
+      "r1_native_correctness_gate_closed": false,
+      "status": "pass"
+    },
+    {
+      "id": "attn-output",
+      "target": "iq36-attn-output-compare",
+      "artifact_prefix": "r1-engine-attn-output-compare",
+      "artifact": "output/r1-engine-attn-output-compare-20260627T074716Z",
+      "passed": true,
+      "gate": "r1_engine_attention_output_projection_compare",
+      "r1_native_correctness_gate_closed": false,
+      "status": "pass"
+    },
+    {
+      "id": "linear-attn-delta",
+      "target": "iq36-linear-attn-delta-compare",
+      "artifact_prefix": "r1-engine-linear-attn-delta-compare",
+      "artifact": "output/r1-engine-linear-attn-delta-compare-20260627T112938Z",
+      "passed": true,
+      "gate": "r1_engine_linear_attention_delta_compare",
+      "r1_native_correctness_gate_closed": false,
+      "status": "pass"
+    },
+    {
+      "id": "linear-attn-preconv",
+      "target": "iq36-linear-attn-preconv-compare",
+      "artifact_prefix": "r1-engine-linear-attn-preconv-compare",
+      "artifact": "output/r1-engine-linear-attn-preconv-compare-20260627T121529Z",
+      "passed": true,
+      "gate": "r1_engine_linear_attn_preconv_compare",
+      "r1_native_correctness_gate_closed": false,
+      "status": "pass"
+    },
+    {
+      "id": "linear-attn-conv",
+      "target": "iq36-linear-attn-conv-compare",
+      "artifact_prefix": "r1-engine-linear-attn-conv-compare",
+      "artifact": "output/r1-engine-linear-attn-conv-compare-20260627T123037Z",
+      "passed": true,
+      "gate": "r1_engine_linear_attn_conv_compare",
+      "r1_native_correctness_gate_closed": false,
+      "status": "pass"
+    },
+    {
+      "id": "linear-attn-postconv",
+      "target": "iq36-linear-attn-postconv-compare",
+      "artifact_prefix": "r1-engine-linear-attn-postconv-compare",
+      "artifact": "output/r1-engine-linear-attn-postconv-compare-20260627T114940Z",
+      "passed": true,
+      "gate": "r1_engine_linear_attention_postconv_compare",
+      "r1_native_correctness_gate_closed": false,
+      "status": "pass"
+    },
+    {
+      "id": "linear-attn-all-postconv",
+      "target": "iq36-linear-attn-all-postconv-compare",
+      "artifact_prefix": "r1-engine-linear-attn-all-postconv-compare",
+      "artifact": "output/r1-engine-linear-attn-all-postconv-compare-20260627T153914Z",
+      "passed": true,
+      "gate": "r1_engine_linear_attention_all_postconv_compare",
+      "r1_native_correctness_gate_closed": false,
+      "status": "pass"
+    },
+    {
+      "id": "attn-residual",
+      "target": "iq36-attn-residual-compare",
+      "artifact_prefix": "r1-engine-attn-residual-compare",
+      "artifact": "output/r1-engine-attn-residual-compare-20260627T075849Z",
+      "passed": true,
+      "gate": "r1_engine_attention_residual_compare",
+      "r1_native_correctness_gate_closed": false,
+      "status": "pass"
+    },
+    {
+      "id": "ffn-rmsnorm",
+      "target": "iq36-ffn-rmsnorm-compare",
+      "artifact_prefix": "r1-engine-ffn-rmsnorm-compare",
+      "artifact": "output/r1-engine-ffn-rmsnorm-compare-20260627T080720Z",
+      "passed": true,
+      "gate": "r1_engine_ffn_rmsnorm_compare",
+      "r1_native_correctness_gate_closed": false,
+      "status": "pass"
+    },
+    {
+      "id": "router-logits",
+      "target": "iq36-router-logits-compare",
+      "artifact_prefix": "r1-engine-router-logits-compare",
+      "artifact": "output/r1-engine-router-logits-compare-20260627T081845Z",
+      "passed": true,
+      "gate": "r1_engine_router_logits_compare",
+      "r1_native_correctness_gate_closed": false,
+      "status": "pass"
+    },
+    {
+      "id": "router-topk",
+      "target": "iq36-router-topk-compare",
+      "artifact_prefix": "r1-engine-router-topk-compare",
+      "artifact": "output/r1-engine-router-topk-compare-20260627T082911Z",
+      "passed": true,
+      "gate": "r1_engine_router_topk_compare",
+      "r1_native_correctness_gate_closed": false,
+      "status": "pass"
+    },
+    {
+      "id": "selected-expert-gate-up",
+      "target": "iq36-selected-expert-gate-up-compare",
+      "artifact_prefix": "r1-engine-selected-expert-gate-up-compare",
+      "artifact": "output/r1-engine-selected-expert-gate-up-compare-20260627T084406Z",
+      "passed": true,
+      "gate": "r1_engine_selected_expert_gate_up_compare",
+      "r1_native_correctness_gate_closed": false,
+      "status": "pass"
+    },
+    {
+      "id": "swiglu",
+      "target": "iq36-swiglu-compare",
+      "artifact_prefix": "r1-engine-swiglu-compare",
+      "artifact": "output/r1-engine-swiglu-compare-20260627T085722Z",
+      "passed": true,
+      "gate": "r1_engine_swiglu_compare",
+      "r1_native_correctness_gate_closed": false,
+      "status": "pass"
+    },
+    {
+      "id": "selected-expert-down",
+      "target": "iq36-selected-expert-down-compare",
+      "artifact_prefix": "r1-engine-selected-expert-down-compare",
+      "artifact": "output/r1-engine-selected-expert-down-compare-20260627T090922Z",
+      "passed": true,
+      "gate": "r1_engine_selected_expert_down_compare",
+      "r1_native_correctness_gate_closed": false,
+      "status": "pass"
+    },
+    {
+      "id": "shared-expert",
+      "target": "iq36-shared-expert-compare",
+      "artifact_prefix": "r1-engine-shared-expert-compare",
+      "artifact": "output/r1-engine-shared-expert-compare-20260627T092259Z",
+      "passed": true,
+      "gate": "r1_engine_shared_expert_compare",
+      "r1_native_correctness_gate_closed": false,
+      "status": "pass"
+    },
+    {
+      "id": "moe-residual",
+      "target": "iq36-moe-residual-compare",
+      "artifact_prefix": "r1-engine-moe-residual-compare",
+      "artifact": "output/r1-engine-moe-residual-compare-20260627T093715Z",
+      "passed": true,
+      "gate": "r1_engine_moe_residual_compare",
+      "r1_native_correctness_gate_closed": false,
+      "status": "pass"
+    },
+    {
+      "id": "ffn-block",
+      "target": "iq36-ffn-block-compare",
+      "artifact_prefix": "r1-engine-ffn-block-compare",
+      "artifact": "output/r1-engine-ffn-block-compare-20260627T103048Z",
+      "passed": true,
+      "gate": "r1_engine_ffn_block_compare",
+      "r1_native_correctness_gate_closed": false,
+      "status": "pass"
+    },
+    {
+      "id": "layer-shell",
+      "target": "iq36-layer-shell-compare",
+      "artifact_prefix": "r1-engine-layer-shell-compare",
+      "artifact": "output/r1-engine-layer-shell-compare-20260627T104336Z",
+      "passed": true,
+      "gate": "r1_engine_layer_shell_compare",
+      "r1_native_correctness_gate_closed": false,
+      "status": "pass"
+    },
+    {
+      "id": "layer-postconv",
+      "target": "iq36-layer-postconv-compare",
+      "artifact_prefix": "r1-engine-layer-postconv-compare",
+      "artifact": "output/r1-engine-layer-postconv-compare-20260627T120307Z",
+      "passed": true,
+      "gate": "r1_engine_layer_postconv_compare",
+      "r1_native_correctness_gate_closed": false,
+      "status": "pass"
+    },
+    {
+      "id": "layer-stateful-linear-attn",
+      "target": "iq36-layer-stateful-linear-attn-compare",
+      "artifact_prefix": "r1-engine-layer-stateful-linear-attn-compare",
+      "artifact": "output/r1-engine-layer-stateful-linear-attn-compare-20260627T124454Z",
+      "passed": true,
+      "gate": "r1_engine_layer_stateful_linear_attn_compare",
+      "r1_native_correctness_gate_closed": false,
+      "status": "pass"
+    },
+    {
+      "id": "two-linear-layers-stateful",
+      "target": "iq36-two-linear-layers-stateful-compare",
+      "artifact_prefix": "r1-engine-two-linear-layers-stateful-compare",
+      "artifact": "output/r1-engine-two-linear-layers-stateful-compare-20260627T125708Z",
+      "passed": false,
+      "gate": "r1_engine_two_linear_layers_stateful_compare",
+      "r1_native_correctness_gate_closed": false,
+      "status": "fail"
+    },
+    {
+      "id": "full-attn-qkv",
+      "target": "iq36-full-attn-qkv-compare",
+      "artifact_prefix": "r1-engine-full-attn-qkv-compare",
+      "artifact": "output/r1-engine-full-attn-qkv-compare-20260627T131936Z",
+      "passed": true,
+      "gate": "r1_engine_full_attn_qkv_compare",
+      "r1_native_correctness_gate_closed": false,
+      "status": "pass"
+    },
+    {
+      "id": "full-attn-rope",
+      "target": "iq36-full-attn-rope-compare",
+      "artifact_prefix": "r1-engine-full-attn-rope-compare",
+      "artifact": "output/r1-engine-full-attn-rope-compare-20260627T134454Z",
+      "passed": true,
+      "gate": "r1_engine_full_attn_rope_compare",
+      "r1_native_correctness_gate_closed": false,
+      "status": "pass"
+    },
+    {
+      "id": "full-attn-core",
+      "target": "iq36-full-attn-core-compare",
+      "artifact_prefix": "r1-engine-full-attn-core-compare",
+      "artifact": "output/r1-engine-full-attn-core-compare-20260627T143426Z",
+      "passed": true,
+      "gate": "r1_engine_full_attn_core_compare",
+      "r1_native_correctness_gate_closed": false,
+      "status": "pass"
+    },
+    {
+      "id": "full-attn-stateful-layer",
+      "target": "iq36-full-attn-stateful-layer-compare",
+      "artifact_prefix": "r1-engine-full-attn-stateful-layer-compare",
+      "artifact": "output/r1-engine-full-attn-stateful-layer-compare-20260627T144639Z",
+      "passed": true,
+      "gate": "r1_engine_full_attn_stateful_layer_compare",
+      "r1_native_correctness_gate_closed": false,
+      "status": "pass"
+    },
+    {
+      "id": "full-attn-all-stateful-layers",
+      "target": "iq36-full-attn-all-stateful-layers-compare",
+      "artifact_prefix": "r1-engine-full-attn-all-stateful-layers-compare",
+      "artifact": "output/r1-engine-full-attn-all-stateful-layers-compare-20260627T151140Z",
+      "passed": true,
+      "gate": "r1_engine_full_attn_all_stateful_layers_compare",
+      "r1_native_correctness_gate_closed": false,
+      "status": "pass"
+    },
+    {
+      "id": "full-attn-gate",
+      "target": "iq36-full-attn-gate-compare",
+      "artifact_prefix": "r1-engine-full-attn-gate-compare",
+      "artifact": "output/r1-engine-full-attn-gate-compare-20260627T141107Z",
+      "passed": true,
+      "gate": "r1_engine_full_attn_gate_compare",
+      "r1_native_correctness_gate_closed": false,
+      "status": "pass"
+    },
+    {
+      "id": "full-attn-output-projection",
+      "target": "iq36-full-attn-output-projection-compare",
+      "artifact_prefix": "r1-engine-full-attn-output-projection-compare",
+      "artifact": "output/r1-engine-full-attn-output-projection-compare-20260627T135544Z",
+      "passed": true,
+      "gate": "r1_engine_full_attn_output_projection_compare",
+      "r1_native_correctness_gate_closed": false,
+      "status": "pass"
+    },
+    {
+      "id": "loop-shell",
+      "target": "iq36-loop-shell-compare",
+      "artifact_prefix": "r1-engine-loop-shell-compare",
+      "artifact": "output/r1-engine-loop-shell-compare-20260627T110740Z",
+      "passed": true,
+      "gate": "r1_engine_loop_shell_compare",
+      "r1_native_correctness_gate_closed": false,
+      "status": "pass"
+    },
+    {
+      "id": "final-norm",
+      "target": "iq36-final-norm-compare",
+      "artifact_prefix": "r1-engine-final-norm-compare",
+      "artifact": "output/r1-engine-final-norm-compare-20260627T094922Z",
+      "passed": true,
+      "gate": "r1_engine_final_norm_compare",
+      "r1_native_correctness_gate_closed": false,
+      "status": "pass"
+    },
+    {
+      "id": "lm-head",
+      "target": "iq36-lm-head-compare",
+      "artifact_prefix": "r1-engine-lm-head-compare",
+      "artifact": "output/r1-engine-lm-head-compare-20260627T100103Z",
+      "passed": true,
+      "gate": "r1_engine_lm_head_compare",
+      "r1_native_correctness_gate_closed": false,
+      "status": "pass"
+    },
+    {
+      "id": "sampler",
+      "target": "iq36-sampler-compare",
+      "artifact_prefix": "r1-engine-sampler-compare",
+      "artifact": "output/r1-engine-sampler-compare-20260627T100947Z",
+      "passed": true,
+      "gate": "r1_engine_sampler_compare",
+      "r1_native_correctness_gate_closed": false,
+      "status": "pass"
+    }
+  ]
+}

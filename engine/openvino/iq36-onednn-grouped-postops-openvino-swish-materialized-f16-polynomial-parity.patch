@@ -1,0 +1,51 @@
+diff --git a/src/gpu/intel/matmul/grouped_post_ops_gen.cpp b/src/gpu/intel/matmul/grouped_post_ops_gen.cpp
+index 579b0eca8c..0c37a17345 100644
+--- a/src/gpu/intel/matmul/grouped_post_ops_gen.cpp
++++ b/src/gpu/intel/matmul/grouped_post_ops_gen.cpp
+@@ -138,6 +138,34 @@ std::string generate_post_ops_microgemm_header(
+           "ugemm_grouped_c_type_block0, ugemm_grouped_c_type_block1, "
+           "ugemm_grouped_c_type_nblock0, "
+           "ugemm_grouped_c_type_nblock1)\n";
++    os << R"CLC(
++inline float iq36_grouped_postops_exp_polynomial(float x) {
++    if (x > 88.0f) return INFINITY;
++    if (x < -104.0f) return 0.0f;
++    const int exponent = convert_int_rte(x * 1.4426950408889634f);
++    const float remainder
++            = x - convert_float(exponent) * 0.6931471805599453f;
++    const float polynomial
++            = 1.0f
++            + remainder
++                    * (1.0f
++                            + remainder
++                                    * (0.5f
++                                            + remainder
++                                                    * (0.16666666666666666f
++                                                            + remainder
++                                                                    * (0.041666666666666664f
++                                                                            + remainder
++                                                                                    * (0.008333333333333333f
++                                                                                            + remainder
++                                                                                                    * (0.001388888888888889f
++                                                                                                            + remainder
++                                                                                                                    * (0.0001984126984126984f
++                                                                                                                            + remainder
++                                                                                                                                    * 0.0000248015873015873f)))))));
++    return ldexp(polynomial, exponent);
++}
++)CLC";
+     os << "inline void apply_post_ops_chain(ugemm_grouped_c_type *c_tile, long "
+           "n, "
+           "long m, long lddst, off_t sg_i0, off_t sg_j0, off_t src_offset, "
+@@ -173,8 +201,9 @@ std::string generate_post_ops_microgemm_header(
+             os << "            volatile float eltwise_gate_" << i
+                << " = convert_float(eltwise_gate_f16_" << i << ");\n";
+             os << "            volatile float eltwise_value_" << i
+-               << " = eltwise_gate_" << i << " / (1.0f + native_exp(-("
+-               << to_ocl_float(e.eltwise.alpha) << ") * eltwise_gate_" << i
++               << " = eltwise_gate_" << i
++               << " / (1.0f + iq36_grouped_postops_exp_polynomial(-("
++               << to_ocl_float(e.eltwise.alpha) << ") * eltwise_gate_" << i
+                << "));\n";
+             os << "            (*c_tile).x[tile_i_" << i << "][tile_s_" << i
+                << "] = (" << to_ocl_float(e.eltwise.scale)

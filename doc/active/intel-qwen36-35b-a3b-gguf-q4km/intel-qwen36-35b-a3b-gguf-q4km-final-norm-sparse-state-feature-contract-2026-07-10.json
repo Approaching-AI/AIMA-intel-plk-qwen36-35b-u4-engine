@@ -1,0 +1,92 @@
+{
+  "schema_version": "intel-qwen36-final-norm-sparse-state-feature-contract-v0",
+  "workstream": "intel-qwen36-35b-a3b-gguf-q4km",
+  "created_date": "2026-07-10",
+  "purpose": "Pre-register one non-top8 GPU state feature after all bounded top8-observable correction models fail before validation.",
+  "predecessor_corpus_contract": "doc/active/intel-qwen36-35b-a3b-gguf-q4km/intel-qwen36-35b-a3b-gguf-q4km-state-conditioned-head-correction-corpus-2026-07-10.json",
+  "split_policy": {
+    "reuse_locked_fit_case_count": 12,
+    "reuse_locked_validation_case_count": 6,
+    "reuse_locked_test_case_count": 6,
+    "validation_or_test_results_allowed_for_feature_selection_or_fit": false,
+    "acceptance_prompt_results_allowed_for_feature_selection_or_fit": false
+  },
+  "feature_collection_contract": {
+    "source": "GPU final-normalized hidden state already present at the distribution LM-head boundary",
+    "hidden_size": 2048,
+    "fit_diagnostic_may_record_full_vector": true,
+    "fit_diagnostic_case_ids": [
+      "fresh_arithmetic_01",
+      "fresh_arithmetic_02",
+      "fresh_code_01",
+      "fresh_code_02",
+      "fresh_instruction_01",
+      "fresh_instruction_02",
+      "fresh_factual_01",
+      "fresh_factual_02",
+      "fresh_transformation_01",
+      "fresh_transformation_02",
+      "fresh_structured_01",
+      "fresh_structured_02"
+    ],
+    "distribution_only": true,
+    "runtime_full_vector_host_read_allowed": false,
+    "runtime_selected_dimension_gather_only": true,
+    "maximum_selected_dimensions": 16,
+    "runtime_native_final_norm_allowed": false,
+    "runtime_prompt_case_or_position_features_allowed": false
+  },
+  "feature_selection_contract": {
+    "method": "nested leave-one-fit-prompt-out absolute-correlation screening on training folds only",
+    "selection_target": "selected16 probability-mass-matched oracle common-offset target",
+    "maximum_selected_dimensions": 16,
+    "final_dimension_set_selected_from_all_fit_cases_only": true,
+    "validation_or_test_retuning_allowed": false
+  },
+  "model_contract": {
+    "model_name": "token_intercepts_plus_shared_sparse_final_norm_score",
+    "equation": "correction(token)=token_intercept[token]+sum(shared_dimension_coefficient[j]*gpu_final_norm[dimension[j]],j=1..16)",
+    "selected_token_ids": [
+      25,
+      421,
+      271,
+      198,
+      8160,
+      7888,
+      248068,
+      90700,
+      24526,
+      760,
+      47205,
+      16,
+      279,
+      79767,
+      3840,
+      19205
+    ],
+    "token_intercept_parameters": 16,
+    "shared_dimension_parameters": 16,
+    "maximum_parameters": 32,
+    "ridge_lambda_grid": [
+      0.0001,
+      0.001,
+      0.01,
+      0.1,
+      1.0,
+      10.0
+    ],
+    "additional_model_variants_allowed": false,
+    "runtime_native_oracle_allowed": false,
+    "runtime_prompt_case_or_position_features_allowed": false,
+    "full_vocab_host_rescan_allowed": false,
+    "implementation_added_wall_us_per_token_max": 20.525576981789345
+  },
+  "correctness_contract": {
+    "top1_rate_min": 1.0,
+    "max_kld": 0.005,
+    "per_case_kld_regression_epsilon": 1e-7,
+    "grouped_fit_cross_validation_must_pass_before_validation": true,
+    "full_fit_must_pass_before_validation": true,
+    "validation_and_test_must_both_pass": true
+  }
+}

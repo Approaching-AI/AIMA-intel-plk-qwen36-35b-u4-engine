@@ -1,0 +1,25 @@
+.DS_Store
+*.pyc
+__pycache__/
+*.egg-info/
+.venv/
+build/
+dist/
+*.o
+*.d
+*.log
+
+# Experiment outputs are indexed by directory, but bulky/raw payloads must be
+# added intentionally. The explore log is Tier-1 disposable census input
+# (frontier-sync reads it locally), not repo history.
+output/*/
+output/explore-log.jsonl
+!output/README.md
+!output/.gitkeep
+
+# Local secrets and host-specific scratch.
+.env
+.env.*
+*.pem
+*.key
+scratch/

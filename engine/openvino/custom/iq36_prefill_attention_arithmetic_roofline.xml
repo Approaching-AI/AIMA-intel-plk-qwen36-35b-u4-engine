@@ -1,0 +1,29 @@
+<CustomLayer name="IQ36PrefillAttentionArithmeticRoofline" type="SimpleGPU" version="1">
+  <Kernel entry="iq36_prefill_attention_tiled">
+    <Source filename="iq36_hot_attention_tiled_helpers.cl"/>
+    <Source filename="iq36_prefill_microkernel_shims.cl"/>
+    <Source filename="iq36_prefill_attention_tiled.cl"/>
+  </Kernel>
+  <Buffers>
+    <Tensor arg-index="0" type="input" port-index="0" format="BFYX"/>
+    <Tensor arg-index="1" type="input" port-index="1" format="BFYX"/>
+    <Tensor arg-index="2" type="input" port-index="2" format="BFYX"/>
+    <Tensor arg-index="3" type="input" port-index="3" format="BFYX"/>
+    <Tensor arg-index="4" type="input" port-index="4" format="BFYX"/>
+    <Tensor arg-index="5" type="input" port-index="5" format="BFYX"/>
+    <Tensor arg-index="6" type="input" port-index="6" format="BFYX"/>
+    <Tensor arg-index="7" type="input" port-index="7" format="BFYX"/>
+    <Tensor arg-index="8" type="input" port-index="8" format="BFYX"/>
+    <Tensor arg-index="9" type="input" port-index="9" format="BFYX"/>
+    <Tensor arg-index="10" type="input" port-index="10" format="BFYX"/>
+    <Tensor arg-index="11" type="input" port-index="11" format="BFYX"/>
+    <Tensor arg-index="12" type="input" port-index="12" format="BFYX"/>
+    <Tensor arg-index="13" type="output" port-index="0" format="BFYX"/>
+    <Tensor arg-index="14" type="output" port-index="1" format="BFYX"/>
+    <Tensor arg-index="15" type="output" port-index="2" format="BFYX"/>
+    <Tensor arg-index="16" type="output" port-index="3" format="BFYX"/>
+    <Tensor arg-index="17" type="output" port-index="4" format="BFYX"/>
+  </Buffers>
+  <CompilerOptions options="-cl-std=CL3.0 -cl-fp32-correctly-rounded-divide-sqrt -Dcl_intel_dot_accumulate -Dcl_intel_global_float_atomic -Dcl_intel_subgroup_matrix_multiply_accumulate -Dcl_intel_subgroup_split_matrix_multiply_accumulate -DIQ36_BUILD_PREFILL=1 -DIQ36_PREFILL_FULL_HISTORY=1 -DIQ36_PREFILL_INITIAL=1 -DIQ36_PREFILL_USE_MICROKERNEL=1 -DIQ36_PREFILL_ARITHMETIC_ROOFLINE=1"/>
+  <WorkSizes global="128,Y,B*F" local="128,1,1"/>
+</CustomLayer>

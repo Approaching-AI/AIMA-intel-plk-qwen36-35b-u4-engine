@@ -1,0 +1,731 @@
+diff --git a/src/plugins/intel_gpu/src/graph/registry/fully_connected_impls.cpp b/src/plugins/intel_gpu/src/graph/registry/fully_connected_impls.cpp
+index e9489cf95da..fa5e9663e92 100644
+--- a/src/plugins/intel_gpu/src/graph/registry/fully_connected_impls.cpp
++++ b/src/plugins/intel_gpu/src/graph/registry/fully_connected_impls.cpp
+@@ -5,6 +5,7 @@
+ #include "primitive_inst.h"
+ #include "registry.hpp"
+ #include "intel_gpu/primitives/fully_connected.hpp"
++#include "impls/ocl/iq36_fixed_fc.hpp"
+ 
+ 
+ #if OV_GPU_WITH_ONEDNN
+@@ -17,6 +18,7 @@ using namespace cldnn;
+ 
+ const std::vector<std::shared_ptr<cldnn::ImplementationManager>>& Registry<fully_connected>::get_implementations() {
+     static const std::vector<std::shared_ptr<ImplementationManager>> impls = {
++        OV_GPU_CREATE_INSTANCE_OCL(ocl::IQ36FixedFCImplementationManager)
+         OV_GPU_CREATE_INSTANCE_ONEDNN(onednn::FullyConnectedImplementationManager, shape_types::static_shape)
+         OV_GPU_GET_INSTANCE_OCL(fully_connected, shape_types::static_shape)
+         OV_GPU_GET_INSTANCE_OCL(fully_connected, shape_types::dynamic_shape,
+diff --git a/src/plugins/intel_gpu/src/plugin/transformations/fc_horizontal_fusion.cpp b/src/plugins/intel_gpu/src/plugin/transformations/fc_horizontal_fusion.cpp
+index 1453e45b5b2..e28f95e33a2 100644
+--- a/src/plugins/intel_gpu/src/plugin/transformations/fc_horizontal_fusion.cpp
++++ b/src/plugins/intel_gpu/src/plugin/transformations/fc_horizontal_fusion.cpp
+@@ -17,17 +17,100 @@
+ #include "openvino/core/graph_util.hpp"
+ #include "openvino/op/add.hpp"
+ #include "openvino/op/concat.hpp"
+-#include "openvino/op/multiply.hpp"
+-#include "openvino/op/transpose.hpp"
+-#include "openvino/op/variadic_split.hpp"
+-#include "openvino/op/add.hpp"
+-#include "openvino/op/concat.hpp"
++#include "openvino/op/convert.hpp"
+ #include "openvino/op/multiply.hpp"
+ #include "openvino/op/transpose.hpp"
+ #include "openvino/op/variadic_split.hpp"
++
++#include <cstdlib>
++#include <string>
+ 
+ namespace ov::intel_gpu {
+ 
++namespace {
++
++using CompressedFC = op::FullyConnectedCompressed;
++using CompressedFCVector = std::vector<std::shared_ptr<CompressedFC>>;
++
++CompressedFCVector get_compressed_fc_users(const std::shared_ptr<Node>& input) {
++    CompressedFCVector candidates;
++    for (const auto& user : input->get_users()) {
++        if (const auto& fc = ov::as_type_ptr<CompressedFC>(user))
++            candidates.push_back(fc);
++    }
++    return candidates;
++}
++
++CompressedFCVector get_locked_router_shared_fanout(const std::shared_ptr<Node>& input) {
++    auto candidates = get_compressed_fc_users(input);
++    const char* scope_value = std::getenv("IQ36_FIXED_FC_MANAGER_SCOPE");
++    if (!scope_value || std::string(scope_value) != "m1024")
++        return {};
++
++    // The locked fanout has four K=2048 FCs with N=[1, 512, 512, 256].
++    // Keep the scalar shared-expert gate and N=256 router independent;
++    // fuse only the two N=512 bulk projections.
++    if (candidates.size() != 4)
++        return {};
++
++    size_t n1_count = 0;
++    size_t n256_count = 0;
++    size_t n512_count = 0;
++    for (const auto& fc : candidates) {
++        const auto& weight_shape = fc->get_input_partial_shape(1);
++        if (!weight_shape.is_static() || weight_shape.size() != 2)
++            return {};
++        const auto shape = weight_shape.to_shape();
++        if (shape[1] != 2048)
++            return {};
++        if (shape[0] == 1) {
++            n1_count++;
++        } else if (shape[0] == 256) {
++            n256_count++;
++        } else if (shape[0] == 512) {
++            n512_count++;
++        } else {
++            return {};
++        }
++    }
++
++    if (n1_count != 1 || n256_count != 1 || n512_count != 2)
++        return {};
++
++    return candidates;
++}
++
++CompressedFCVector get_horizontal_fusion_candidates(const std::shared_ptr<Node>& input) {
++    auto candidates = get_compressed_fc_users(input);
++    const auto locked_fanout = get_locked_router_shared_fanout(input);
++    if (locked_fanout.empty())
++        return candidates;
++
++    CompressedFCVector shared_expert_candidates;
++    for (const auto& fc : locked_fanout) {
++        const auto shape = fc->get_input_shape(1);
++        if (shape[0] == 512)
++            shared_expert_candidates.push_back(fc);
++    }
++    return shared_expert_candidates;
++}
++
++void expand_locked_zero_points_to_u8(const std::shared_ptr<Node>& input) {
++    for (const auto& fc : get_locked_router_shared_fanout(input)) {
++        if (fc->get_input_shape(1)[0] != 512)
++            continue;
++        if (fc->inputs().size() <= 4 || fc->get_input_element_type(4) != ov::element::u4)
++            continue;
++        const auto zero_point = fc->input_value(4);
++        auto expanded = std::make_shared<ov::op::v0::Convert>(zero_point, ov::element::u8);
++        expanded->set_friendly_name(fc->get_friendly_name() + "_iq36_u8_zero_point");
++        ov::copy_runtime_info(zero_point.get_node_shared_ptr(), expanded);
++        fc->input(4).replace_source_output(expanded->output(0));
++    }
++}
++
++}  // namespace
++
+ FullyConnectedHorizontalFusion::FullyConnectedHorizontalFusion(bool fuse_mlp_swiglu) {
+     using namespace ov::pass::pattern;
+ 
+@@ -66,10 +149,8 @@ FullyConnectedHorizontalFusion::FullyConnectedHorizontalFusion(bool fuse_mlp_swi
+         size_t user_fc_count = 0;
+         int32_t nodes_with_bias = 0;
+         int32_t nodes_with_zp = 0;
+-        for (const auto& u : input->get_users()) {
+-            const auto& fc_user = ov::as_type_ptr<op::FullyConnectedCompressed>(u);
+-            if (!fc_user)
+-                continue;
++        const auto fc_candidates = get_horizontal_fusion_candidates(input);
++        for (const auto& fc_user : fc_candidates) {
+             auto num_inputs = fc_user->inputs().size();
+             if (num_inputs >= 5)
+                 nodes_with_zp++;
+@@ -83,7 +164,9 @@ FullyConnectedHorizontalFusion::FullyConnectedHorizontalFusion(bool fuse_mlp_swi
+             }
+             user_fc_count++;
+         }
+-        return (user_fc_count >= min_num_fcs_to_fuse) && (user_fc_count <= max_num_fcs_to_fuse) &&
++        const size_t required_fcs =
++            get_locked_router_shared_fanout(input).empty() ? min_num_fcs_to_fuse : 2;
++        return (user_fc_count >= required_fcs) && (user_fc_count <= max_num_fcs_to_fuse) &&
+                (nodes_with_bias == static_cast<int32_t>(user_fc_count) || nodes_with_bias == 0) &&
+                (nodes_with_zp == static_cast<int32_t>(user_fc_count) || nodes_with_zp == 0);
+     };
+@@ -94,6 +177,11 @@ FullyConnectedHorizontalFusion::FullyConnectedHorizontalFusion(bool fuse_mlp_swi
+         const auto& pattern_map = m.get_pattern_value_map();
+         auto m_fc = pattern_map.at(target_fc).get_node_shared_ptr();
+         auto input_node = m_fc->get_input_node_shared_ptr(0);
++        // The plugin-internal T>1 provider consumes the locked row-major
++        // metadata directly.  Expand only the two fused bulk-projection U4
++        // zero-point constants; weights and F16 scales remain untouched.
++        // T1 still falls through to oneDNN with the equivalent U8 values.
++        expand_locked_zero_points_to_u8(input_node);
+         std::vector<std::shared_ptr<op::FullyConnectedCompressed>> fc_nodes;
+         ov::NodeVector fc_nodes_vec;
+         ov::NodeVector weight_nodes;
+@@ -101,24 +189,21 @@ FullyConnectedHorizontalFusion::FullyConnectedHorizontalFusion(bool fuse_mlp_swi
+         ov::NodeVector bias_nodes;
+         ov::NodeVector zp_nodes;
+         int32_t bias_rank = -1;
+-        for (auto user : input_node->get_users()) {
+-            auto fc_user = ov::as_type_ptr<op::FullyConnectedCompressed>(user);
+-            if (fc_user) {
+-                OPENVINO_ASSERT(fc_user->inputs().size() >= 4, "Compressed FC should have at least 4 inputs");
+-                fc_nodes.push_back(fc_user);
+-                fc_nodes_vec.push_back(fc_user);
+-                weight_nodes.push_back(fc_user->get_input_node_shared_ptr(1));
+-                if (!ov::as_type_ptr<op::Placeholder>(fc_user->get_input_node_shared_ptr(2))) {
+-                    if (bias_rank == -1)
+-                        bias_rank = static_cast<int32_t>(fc_user->get_input_partial_shape(2).size());
+-                    if (bias_rank != static_cast<int32_t>(fc_user->get_input_partial_shape(2).size()))
+-                        return false;
+-                    bias_nodes.push_back(fc_user->get_input_node_shared_ptr(2));
+-                }
+-                scale_nodes.push_back(fc_user->get_input_node_shared_ptr(3));
+-                if (fc_user->inputs().size() > 4)
+-                    zp_nodes.push_back(fc_user->get_input_node_shared_ptr(4));
++        for (const auto& fc_user : get_horizontal_fusion_candidates(input_node)) {
++            OPENVINO_ASSERT(fc_user->inputs().size() >= 4, "Compressed FC should have at least 4 inputs");
++            fc_nodes.push_back(fc_user);
++            fc_nodes_vec.push_back(fc_user);
++            weight_nodes.push_back(fc_user->get_input_node_shared_ptr(1));
++            if (!ov::as_type_ptr<op::Placeholder>(fc_user->get_input_node_shared_ptr(2))) {
++                if (bias_rank == -1)
++                    bias_rank = static_cast<int32_t>(fc_user->get_input_partial_shape(2).size());
++                if (bias_rank != static_cast<int32_t>(fc_user->get_input_partial_shape(2).size()))
++                    return false;
++                bias_nodes.push_back(fc_user->get_input_node_shared_ptr(2));
+             }
++            scale_nodes.push_back(fc_user->get_input_node_shared_ptr(3));
++            if (fc_user->inputs().size() > 4)
++                zp_nodes.push_back(fc_user->get_input_node_shared_ptr(4));
+         }
+         // fc weight is already transposed to [N, K]
+         const size_t weight_idx = 1;
+diff --git a/src/plugins/intel_gpu/src/graph/impls/ocl/iq36_fixed_fc.cpp b/src/plugins/intel_gpu/src/graph/impls/ocl/iq36_fixed_fc.cpp
+new file mode 100644
+index 00000000000..d4726b48aa3
+--- /dev/null
++++ b/src/plugins/intel_gpu/src/graph/impls/ocl/iq36_fixed_fc.cpp
+@@ -0,0 +1,487 @@
++// Copyright (C) 2018-2026 Intel Corporation
++// SPDX-License-Identifier: Apache-2.0
++//
++
++
++#include "iq36_fixed_fc.hpp"
++
++#include "dynamic_quantize_inst.h"
++#include "fully_connected_inst.h"
++#include "primitive_base.hpp"
++
++#ifdef ENABLE_ONEDNN_FOR_GPU
++#include "gpu/intel/gemm/jit/include/gemmstone/microkernel/shim.hpp"
++#include "gpu/intel/gemm/jit/include/gemmstone/microkernel_selector.hpp"
++#endif
++
++#include <cstdlib>
++#include <fstream>
++#include <mutex>
++#include <string>
++
++namespace cldnn {
++namespace ocl {
++namespace {
++
++constexpr size_t kK = 2048;
++constexpr size_t kGroups = 32;
++constexpr size_t kMaxTokens = 32768;
++constexpr uint32_t kTargetIpVersion = 0x07800004;
++constexpr uint32_t kTargetEuCount = 96;
++constexpr char kKernelName[] = "iq36_fixed_fc_row_major_u8zp";
++
++bool is_target_width(size_t width) {
++    if (width != 1024)
++        return false;
++    const char* scope_value = std::getenv("IQ36_FIXED_FC_MANAGER_SCOPE");
++    if (!scope_value || scope_value[0] == '\0')
++        return false;
++    const std::string scope(scope_value);
++    return scope == "m1024";
++}
++
++size_t logical_size(const layout& value) {
++    if (!value.is_static())
++        return 0;
++    return value.get_linear_size();
++}
++
++bool has_exact_static_contract(const kernel_impl_params& params, size_t* tokens_out = nullptr,
++                               size_t* width_out = nullptr) {
++    if (params.output_layouts.size() != 1 || params.has_fused_primitives()) {
++        return false;
++    }
++
++    const auto desc = params.typed_desc<fully_connected>();
++    if (desc->bias.is_valid() || !desc->decompression_scale.is_valid() ||
++        !desc->decompression_zero_point.is_valid() || desc->decompression_zero_point_scalar.has_value()) {
++        return false;
++    }
++
++    const bool dynamic_quantized = desc->dynamic_quantized_activation;
++    const size_t expected_inputs = 4 + (dynamic_quantized ? 1 : 0) +
++        (desc->dynamic_quantized_activation_zp ? 1 : 0) +
++        (desc->dynamic_quantized_precomputed_reduction ? 1 : 0);
++    if (params.input_layouts.size() != expected_inputs)
++        return false;
++
++    const auto& input = params.get_input_layout(0);
++    const auto& weights = params.get_input_layout(1);
++    const auto& scales = params.get_input_layout(2);
++    const auto& zero_points = params.get_input_layout(3);
++    const auto& output = params.get_output_layout(0);
++    if (!input.is_static() || !weights.is_static() || !scales.is_static() ||
++        !zero_points.is_static() || !output.is_static()) {
++        return false;
++    }
++    if (input.data_type != (dynamic_quantized ? data_types::i8 : data_types::f16) ||
++        output.data_type != data_types::f16 ||
++        weights.data_type != data_types::u4 || scales.data_type != data_types::f16 ||
++        zero_points.data_type != data_types::u8) {
++        return false;
++    }
++    if (dynamic_quantized) {
++        size_t index = 4;
++        if (params.get_input_layout(index++).data_type != data_types::f16)
++            return false;
++        if (desc->dynamic_quantized_activation_zp &&
++            params.get_input_layout(index++).data_type != data_types::u8)
++            return false;
++        if (desc->dynamic_quantized_precomputed_reduction &&
++            params.get_input_layout(index++).data_type != data_types::i32)
++            return false;
++    }
++
++    const size_t weight_elements = logical_size(weights);
++    if (weight_elements == 0 || weight_elements % kK != 0)
++        return false;
++    const size_t width = weight_elements / kK;
++    if (!is_target_width(width) || logical_size(scales) != width * kGroups ||
++        logical_size(zero_points) != width * kGroups || logical_size(input) % kK != 0 ||
++        logical_size(output) % width != 0) {
++        return false;
++    }
++
++    const size_t input_tokens = logical_size(input) / kK;
++    const size_t output_tokens = logical_size(output) / width;
++    if (input_tokens != output_tokens || input_tokens <= 1 || input_tokens > kMaxTokens)
++        return false;
++
++    const auto& device = params.get_device_info();
++    if (device.ip_version != kTargetIpVersion || device.execution_units_count != kTargetEuCount)
++        return false;
++
++    if (tokens_out)
++        *tokens_out = input_tokens;
++    if (width_out)
++        *width_out = width;
++    return true;
++}
++
++#ifdef ENABLE_ONEDNN_FOR_GPU
++struct GeneratedKernel {
++    std::string source;
++    size_t tile_m;
++    size_t tile_n;
++    size_t local_m;
++    size_t local_n;
++};
++
++GeneratedKernel build_source(size_t width, size_t tokens) {
++    namespace gs = ::gemmstone;
++    namespace micro = gs::microkernel;
++
++    micro::HWInformation hardware;
++    hardware.euCount = kTargetEuCount;
++    hardware.gmdid = kTargetIpVersion;
++    hardware.systolicAvailable = true;
++
++    gs::GEMMProblem problem;
++    micro::GEMMOptions options;
++    options.slmPtr = true;
++    options.kParallelLocal = false;
++    options.scaleA = true;
++    options.offsetA = true;
++
++    problem.Ta = gs::Type::f16;
++    problem.Ta_ext = gs::Type::u4;
++    problem.A.setAlignment(micro::alignmentForLD(static_cast<int>(kK * problem.Ta_ext)));
++    problem.Ta_scale = gs::Type::f16;
++    problem.A_scale.setAlignment(2);
++    problem.A_scale.layout = gs::MatrixLayout::T;
++    problem.asPtrDims = 2;
++    problem.aqGroupM = 1;
++    problem.aqGroupK = kK / kGroups;
++    problem.Tao = gs::Type::u8;
++    problem.AO.setAlignment(1);
++    problem.AO.layout = gs::MatrixLayout::T;
++    problem.aoPtrDims = 2;
++    problem.aOffset = gs::ABOffset::Calc;
++
++    problem.Tb = problem.Tb_ext = gs::Type::f16;
++    problem.Tc = problem.Tc_ext = problem.Ts = gs::Type::f32;
++    problem.A.layout = gs::MatrixLayout::T;
++    problem.B.layout = gs::MatrixLayout::N;
++    problem.C.layout = gs::MatrixLayout::N;
++    problem.B.setAlignment(micro::alignmentForLD(static_cast<int>(kK * problem.Tb)));
++    problem.C.setAlignment(static_cast<int32_t>(problem.Tc.size()));
++
++    gs::SizeParams sizes;
++    sizes.n = static_cast<uint16_t>(tokens);
++    sizes.m = static_cast<uint16_t>(width);
++    sizes.k = static_cast<uint16_t>(kK);
++    sizes.batch = 1;
++    const micro::Package package = micro::selectGEMM(options, hardware, sizes, problem);
++    OPENVINO_ASSERT(package.grfMin <= 256, "IQ36 fixed-FC package requires ", package.grfMin,
++                    " GRFs, above the locked 256-GRF carrier");
++
++    micro::ShimOptions shim_options;
++    shim_options.subgroupSize = 16;
++    shim_options.useTileOps = true;
++    shim_options.decorator = "moe";
++    const std::string shim = micro::generateShim(package, micro::HostLanguage::OpenCL_C, shim_options);
++
++    const auto setting = [&package](const char* name) {
++        return static_cast<size_t>(package.getSetting(name));
++    };
++    GeneratedKernel generated{
++        std::string(R"CLC(
++#pragma OPENCL EXTENSION cl_khr_fp16 : enable
++#define DECLARE_2D_TILE_OPS(tile_type, element_type, sg, br, bc, nbr, nbc)
++)CLC") + shim + R"CLC(
++
++__attribute__((intel_reqd_sub_group_size(16)))
++__kernel void iq36_fixed_fc_row_major_u8zp(
++    __global const half *input_ptr,
++    __global const uchar *weight_ptr,
++    __global half *out_ptr,
++    __global const half *weight_scales,
++    __global const uchar *weight_zps,
++    int m,
++    int k,
++    int n) {
++  const uint subgroup_m = sub_group_broadcast(get_local_id(0) / 16U, 0);
++  const uint subgroup_n = sub_group_broadcast(get_local_id(1), 0);
++  const uint wg_m = get_group_id(0) * ugemm_moe_wg_tile_m;
++  const uint wg_n = get_group_id(1) * ugemm_moe_wg_tile_n;
++#if ugemm_moe_slm_size > 0
++  __local char slm[ugemm_moe_slm_size];
++#define IQ36_SLM_ARG slm
++#else
++#define IQ36_SLM_ARG 0
++#endif
++
++  const ugemm_moe_c_type tile = ugemm_moe(
++      weight_ptr, k, input_ptr, k, m, n, k,
++      wg_m, wg_n, 0, subgroup_m, subgroup_n, IQ36_SLM_ARG,
++      weight_scales, weight_zps, k / 64);
++  const uint tile_m = wg_m + subgroup_m * ugemm_moe_sg_tile_m;
++  const uint tile_n = wg_n + subgroup_n * ugemm_moe_sg_tile_n;
++  const uint lane = get_sub_group_local_id();
++
++  __attribute__((opencl_unroll_hint))
++  for (uint column = 0U; column < ugemm_moe_sg_tile_n; ++column) {
++    if (tile_n + column >= (uint)n) continue;
++    __attribute__((opencl_unroll_hint))
++    for (uint row0 = 0U; row0 < ugemm_moe_sg_tile_m;
++         row0 += ugemm_moe_c_type_block0) {
++      const uint row = row0 + lane;
++      if (tile_m + row >= (uint)m) continue;
++      const uint register_i =
++          row0 / ugemm_moe_c_type_block0 +
++          ugemm_moe_c_type_nblock0 * (column / ugemm_moe_c_type_block1);
++      const uint register_j = column % ugemm_moe_c_type_block1;
++      out_ptr[(ulong)(tile_n + column) * (ulong)m + tile_m + row] =
++          convert_half_rte(tile.x[register_i][register_j]);
++    }
++  }
++}
++)CLC",
++        setting("wg_tile_m"),
++        setting("wg_tile_n"),
++        setting("sg_per_wg_m") * 16,
++        setting("sg_per_wg_n")};
++    OPENVINO_ASSERT(generated.tile_m > 0 && generated.tile_n > 0 &&
++                    generated.local_m > 0 && generated.local_n > 0,
++                    "IQ36 fixed-FC selected an invalid dispatch");
++    return generated;
++}
++#endif
++
++kernel_selector::kernel_data make_kernel_data(size_t tokens, size_t width) {
++#ifndef ENABLE_ONEDNN_FOR_GPU
++    OPENVINO_THROW("IQ36 fixed-FC microkernel provider requires oneDNN GPU support");
++#else
++    kernel_selector::kernel_data data;
++    data.kernelName = kKernelName;
++    data.kernels.resize(1);
++    auto& kernel = data.kernels[0];
++    kernel.code.kernelString = std::make_shared<kernel_selector::kernel_string>();
++    kernel.code.kernelString->entry_point = kKernelName;
++    const auto generated = build_source(width, tokens);
++    kernel.code.kernelString->str = generated.source;
++    kernel.code.kernelString->options =
++        "-cl-std=CL2.0 -cl-intel-256-GRF-per-thread "
++        "-Dcl_intel_dot_accumulate -Dcl_intel_global_float_atomic "
++        "-Dcl_intel_subgroup_matrix_multiply_accumulate "
++        "-Dcl_intel_subgroup_split_matrix_multiply_accumulate";
++    kernel.code.kernelString->batch_compilation = false;
++    kernel.code.kernelString->has_microkernels = true;
++    kernel.params.workGroups.global = {
++        ((width + generated.tile_m - 1) / generated.tile_m) * generated.local_m,
++        ((tokens + generated.tile_n - 1) / generated.tile_n) * generated.local_n,
++        1};
++    kernel.params.workGroups.local = {generated.local_m, generated.local_n, 1};
++    using argument_type = kernel_selector::kernel_argument_types;
++    kernel.params.arguments = {
++        {argument_type::INPUT, 0},
++        {argument_type::WEIGHTS, 0},
++        {argument_type::OUTPUT, 0},
++        {argument_type::INPUT, 1},
++        {argument_type::INPUT, 2},
++        {argument_type::SCALAR, 0},
++        {argument_type::SCALAR, 1},
++        {argument_type::SCALAR, 2},
++    };
++    kernel_selector::ScalarDescriptor scalar;
++    scalar.t = kernel_selector::ScalarDescriptor::Types::INT32;
++    scalar.v.s32 = static_cast<int32_t>(width);
++    kernel.params.scalars.push_back(scalar);
++    scalar.v.s32 = static_cast<int32_t>(kK);
++    kernel.params.scalars.push_back(scalar);
++    scalar.v.s32 = static_cast<int32_t>(tokens);
++    kernel.params.scalars.push_back(scalar);
++    return data;
++#endif
++}
++
++struct IQ36FixedFCImpl : typed_primitive_impl_ocl<fully_connected> {
++    using parent = typed_primitive_impl_ocl<fully_connected>;
++    using parent::parent;
++
++    DECLARE_OBJECT_TYPE_SERIALIZATION(cldnn::ocl::IQ36FixedFCImpl)
++
++    IQ36FixedFCImpl() = default;
++    explicit IQ36FixedFCImpl(const kernel_selector::kernel_data& data) : parent(data) {}
++
++    std::unique_ptr<primitive_impl> clone() const override {
++        return std::make_unique<IQ36FixedFCImpl>(*this);
++    }
++
++protected:
++    void prepare_row_major_metadata(const typed_primitive_inst<fully_connected>& instance,
++                                    const memory::ptr& group_scales,
++                                    const memory::ptr& group_zero_points,
++                                    size_t width) const {
++        if (_group_scales_source == group_scales.get() &&
++            _group_zero_points_source == group_zero_points.get()) {
++            return;
++        }
++        OPENVINO_ASSERT(group_scales->get_layout().format == format::fbyx &&
++                        group_zero_points->get_layout().format == format::fbyx,
++                        "IQ36 fixed-FC expected oneDNN group-major metadata");
++        auto scale_layout = group_scales->get_layout();
++        auto zero_point_layout = group_zero_points->get_layout();
++        scale_layout.format = format::bfyx;
++        zero_point_layout.format = format::bfyx;
++        auto& engine = instance.get_network().get_engine();
++        _row_major_scales = engine.allocate_memory(scale_layout, false);
++        _row_major_zero_points = engine.allocate_memory(zero_point_layout, false);
++        auto& stream = instance.get_network().get_stream();
++        mem_lock<uint16_t, mem_lock_type::read> source_scales(group_scales, stream);
++        mem_lock<uint16_t, mem_lock_type::write> target_scales(_row_major_scales, stream);
++        mem_lock<uint8_t, mem_lock_type::read> source_zero_points(group_zero_points, stream);
++        mem_lock<uint8_t, mem_lock_type::write> target_zero_points(_row_major_zero_points, stream);
++        OPENVINO_ASSERT(source_scales.size() == width * kGroups &&
++                        source_zero_points.size() == width * kGroups,
++                        "IQ36 fixed-FC metadata size differs");
++        for (size_t row = 0; row < width; ++row) {
++            for (size_t group = 0; group < kGroups; ++group) {
++                target_scales.data()[row * kGroups + group] =
++                    source_scales.data()[group * width + row];
++                target_zero_points.data()[row * kGroups + group] =
++                    source_zero_points.data()[group * width + row];
++            }
++        }
++        _group_scales_source = group_scales.get();
++        _group_zero_points_source = group_zero_points.get();
++        const char* trace_path = std::getenv("IQ36_FIXED_FC_MANAGER_TRACE_PATH");
++        if (trace_path && trace_path[0] != '\0') {
++            static std::mutex trace_mutex;
++            std::lock_guard<std::mutex> trace_guard(trace_mutex);
++            std::ofstream trace(trace_path, std::ios::app);
++            if (trace) {
++                trace << "{\"stage\":\"metadata_prepack\",\"node\":\""
++                      << instance.id() << "\",\"m\":" << width
++                      << ",\"groups\":" << kGroups
++                      << ",\"scale_bytes\":" << group_scales->size()
++                      << ",\"zero_point_bytes\":" << group_zero_points->size()
++                      << ",\"source_format\":\"fbyx\",\"target_format\":\"bfyx\"}\n";
++            }
++        }
++    }
++
++    kernel_arguments_data get_arguments(const typed_primitive_inst<fully_connected>& instance) const override {
++        kernel_arguments_data args;
++        memory::ptr activation = instance.input_memory_ptr(0);
++        const auto desc = instance.get_typed_desc<fully_connected>();
++        if (desc->dynamic_quantized_activation) {
++            const auto& dynamic_quantize_dependency = instance.dependencies().at(0);
++            OPENVINO_ASSERT(dynamic_quantize_dependency.first->type() == dynamic_quantize::type_id(),
++                            "IQ36 fixed-FC dynamic activation must come from DynamicQuantize");
++            const auto& source_dependency = dynamic_quantize_dependency.first->dependencies().at(0);
++            activation = source_dependency.first->output_memory_ptr(source_dependency.second);
++            OPENVINO_ASSERT(activation->get_layout().data_type == data_types::f16,
++                            "IQ36 fixed-FC DynamicQuantize source must be F16");
++        }
++        auto weights = instance.weights_memory();
++        auto group_scales = instance.dep_memory_ptr(2);
++        auto group_zero_points = instance.dep_memory_ptr(3);
++        const size_t width = weights->get_layout().get_linear_size() / kK;
++        prepare_row_major_metadata(instance, group_scales, group_zero_points, width);
++        auto scales = _row_major_scales;
++        auto zero_points = _row_major_zero_points;
++        args.inputs = {activation, scales, zero_points};
++        args.weights = weights;
++        args.outputs = {instance.output_memory_ptr(0)};
++        return args;
++    }
++
++private:
++    mutable memory::ptr _row_major_scales;
++    mutable memory::ptr _row_major_zero_points;
++    mutable const memory* _group_scales_source = nullptr;
++    mutable const memory* _group_zero_points_source = nullptr;
++};
++
++void trace_selection(const kernel_impl_params& params, size_t tokens, size_t width,
++                     const kernel_selector::kernel_data& data) {
++    const char* path = std::getenv("IQ36_FIXED_FC_MANAGER_TRACE_PATH");
++    if (!path || path[0] == '\0')
++        return;
++    std::ofstream trace(path, std::ios::app);
++    if (!trace)
++        return;
++    const auto& global = data.kernels[0].params.workGroups.global;
++    const auto& local = data.kernels[0].params.workGroups.local;
++    trace << "{\"node\":\"" << params.desc->id << "\",\"tokens\":" << tokens
++          << ",\"m\":" << width << ",\"k\":" << kK
++          << ",\"provider\":\"iq36_fixed_fc_row_major_u8zp\""
++          << ",\"global\":[" << global[0] << ',' << global[1] << ',' << global[2] << ']'
++          << ",\"local\":[" << local[0] << ',' << local[1] << ',' << local[2] << "]}\n";
++}
++
++}  // namespace
++
++IQ36FixedFCImplementationManager::IQ36FixedFCImplementationManager()
++    // Advertise the manager as oneDNN for graph-layout selection so the T1
++    // denominator keeps its proven oneDNN layouts.  The selected T>1
++    // primitive implementation itself remains an OpenCL microkernel.
++    : ImplementationManager(impl_types::onednn, shape_types::static_shape) {}
++
++bool IQ36FixedFCImplementationManager::validate_impl(const program_node& node) const {
++    if (!node.is_type<fully_connected>())
++        return false;
++    const auto& fc = node.as<fully_connected>();
++    const auto desc = fc.get_primitive();
++    if (desc->bias.is_valid() || !desc->decompression_scale.is_valid() ||
++        !desc->decompression_zero_point.is_valid() || desc->decompression_zero_point_scalar.has_value()) {
++        return false;
++    }
++    const bool dynamic_quantized = desc->dynamic_quantized_activation;
++    const size_t expected_dependencies = 4 + (dynamic_quantized ? 1 : 0) +
++        (desc->dynamic_quantized_activation_zp ? 1 : 0) +
++        (desc->dynamic_quantized_precomputed_reduction ? 1 : 0);
++    if (node.get_dependencies().size() != expected_dependencies)
++        return false;
++    const auto& weights = node.get_dependency(1).get_output_layout();
++    const auto& scales = node.get_dependency(2).get_output_layout();
++    const auto& zero_points = node.get_dependency(3).get_output_layout();
++    if (!weights.is_static() || !scales.is_static() || !zero_points.is_static() ||
++        weights.data_type != data_types::u4 || scales.data_type != data_types::f16 ||
++        zero_points.data_type != data_types::u8) {
++        return false;
++    }
++    const size_t weight_elements = logical_size(weights);
++    if (weight_elements == 0 || weight_elements % kK != 0)
++        return false;
++    const size_t width = weight_elements / kK;
++    if (!is_target_width(width) || logical_size(scales) != width * kGroups ||
++        logical_size(zero_points) != width * kGroups) {
++        return false;
++    }
++    if (dynamic_quantized && !node.get_dependency(0).is_type<dynamic_quantize>())
++        return false;
++    const auto& input = dynamic_quantized
++        ? node.get_dependency(0).get_dependency(0).get_output_layout()
++        : node.get_input_layout(0);
++    if (input.data_type != data_types::f16)
++        return false;
++    if (input.is_static() && logical_size(input) / kK <= 1)
++        return false;
++    return true;
++}
++
++bool IQ36FixedFCImplementationManager::support_shapes(const kernel_impl_params& params) const {
++    return has_exact_static_contract(params);
++}
++
++std::unique_ptr<primitive_impl> IQ36FixedFCImplementationManager::create_impl(
++    const program_node&, const kernel_impl_params& params) const {
++    size_t tokens = 0;
++    size_t width = 0;
++    if (!has_exact_static_contract(params, &tokens, &width))
++        return nullptr;
++    auto data = make_kernel_data(tokens, width);
++    trace_selection(params, tokens, width, data);
++    return std::make_unique<IQ36FixedFCImpl>(data);
++}
++
++in_out_fmts_t IQ36FixedFCImplementationManager::query_formats(const program_node&) const {
++    return {};
++}
++
++}  // namespace ocl
++}  // namespace cldnn
++
++BIND_BINARY_BUFFER_WITH_TYPE(cldnn::ocl::IQ36FixedFCImpl)
+diff --git a/src/plugins/intel_gpu/src/graph/impls/ocl/iq36_fixed_fc.hpp b/src/plugins/intel_gpu/src/graph/impls/ocl/iq36_fixed_fc.hpp
+new file mode 100644
+index 00000000000..81d54b5a8ca
+--- /dev/null
++++ b/src/plugins/intel_gpu/src/graph/impls/ocl/iq36_fixed_fc.hpp
+@@ -0,0 +1,27 @@
++// Copyright (C) 2018-2026 Intel Corporation
++// SPDX-License-Identifier: Apache-2.0
++//
++
++
++#pragma once
++
++#include "registry/implementation_manager.hpp"
++
++namespace cldnn {
++namespace ocl {
++
++class IQ36FixedFCImplementationManager : public ImplementationManager {
++public:
++    IQ36FixedFCImplementationManager();
++
++    OV_GPU_PRIMITIVE_IMPL("ocl::IQ36FixedFCImplementationManager")
++
++    std::unique_ptr<primitive_impl> create_impl(const program_node& node,
++                                                const kernel_impl_params& params) const override;
++    bool validate_impl(const program_node& node) const override;
++    bool support_shapes(const kernel_impl_params& params) const override;
++    in_out_fmts_t query_formats(const program_node& node) const override;
++};
++
++}  // namespace ocl
++}  // namespace cldnn

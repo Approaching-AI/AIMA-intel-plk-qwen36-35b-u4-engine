@@ -1,0 +1,53 @@
+[Unit]
+Description=IQ36 resident OpenVINO inference service
+After=network.target
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=iq36
+Group=iq36
+SupplementaryGroups=render video
+WorkingDirectory=/opt/intel-qwen36
+EnvironmentFile=/etc/iq36/iq36.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=IQ36_COMPILE_CACHE_DIR=/var/cache/iq36/openvino
+LoadCredential=iq36-api-key:/etc/iq36/api-key
+Environment=IQ36_API_KEY_FILE=%d/iq36-api-key
+ExecStart=/opt/intel-qwen36/.venv/bin/iq36-serve
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=600
+TimeoutStopSec=45
+KillSignal=SIGTERM
+KillMode=control-group
+UMask=0077
+CacheDirectory=iq36
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectClock=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectProc=invisible
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+LockPersonality=true
+RestrictRealtime=true
+RemoveIPC=true
+CapabilityBoundingSet=
+SystemCallFilter=~@clock @cpu-emulation @debug @module @mount @obsolete @raw-io @reboot @swap
+SystemCallErrorNumber=EPERM
+IPAddressDeny=any
+IPAddressAllow=localhost
+SystemCallArchitectures=native
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

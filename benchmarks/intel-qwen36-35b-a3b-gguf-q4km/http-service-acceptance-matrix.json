@@ -1,0 +1,190 @@
+{
+  "contract_version": "0.4",
+  "evaluated_at": "2026-08-06",
+  "service_contract": "contracts/qwen36-openai-http-service-contract.json",
+  "release_status": {
+    "bound_target_technical_candidate": "pass",
+    "public_open_source_release": "publication_in_progress"
+  },
+  "release_gate": {
+    "unit_tests": {
+      "status": "pass",
+      "command": "PYTHONPATH=engine/service /home/intel/ov/openvino_env/bin/python -m unittest discover -s engine/service/tests -v",
+      "passed": 66,
+      "failed": 0,
+      "covers": {
+        "protocol_validation_and_openai_error_shape": true,
+        "chat_template_tools_and_strict_schema_validation": true,
+        "prefix_cache_lru_ttl_and_byte_bound": true,
+        "responses_store_lru_ttl_byte_bound_retrieve_and_delete": true,
+        "carrier_capability_and_arbitrary_length_routing": true,
+        "total_context_limit_without_silent_truncation": true,
+        "json_and_sse_lifecycle": true,
+        "stream_and_nonstream_disconnect_cancellation": true,
+        "idle_keepalive_reset_is_benign": true,
+        "queue_limit_request_timeout_and_graceful_shutdown": true,
+        "stable_streaming_detokenization_and_strict_tool_xml": true,
+        "bounded_prometheus_path_label_cardinality": true,
+        "exact_openvino_genai_and_tokenizers_runtime_identity": true
+      }
+    },
+    "real_model_http": {
+      "status": "pass",
+      "artifact": "output/http-service-smoke-max-offline-rc6-20260806/result.json",
+      "artifact_sha256": "bf2dec2297b6d892bd7d863609fabe2bdbe32646da07a2c25395cb1b541b1635",
+      "checks_passed": 17,
+      "checks_failed": 0,
+      "coverage": [
+        "health, warmed readiness, models, and Prometheus metrics",
+        "Chat JSON and bounded-latency SSE",
+        "Responses complete SSE lifecycle, previous_response_id, retrieve, and delete",
+        "function tool call and multi-turn tool result",
+        "exact prefix-state hit equivalence and per-request bypass",
+        "33-token non-aligned prompt",
+        "resident short worker PID stability",
+        "8207-token long_compact route",
+        "8207-token isolated long_full sampling route",
+        "131072-token maximum prompt through HTTP"
+      ]
+    },
+    "official_sdk_compatibility": {
+      "status": "pass",
+      "openai_python_version": "2.53.0",
+      "artifact": "output/http-service-smoke-sdk-rc8-20260806/result.json",
+      "artifact_sha256": "001b8f99693809892ee0ed2b7cfadeca26ec2bac6f5768e97a0ce3ff9a0c5514",
+      "checks_passed": 19,
+      "verified": [
+        "models.list and models.retrieve",
+        "completions.create JSON and stream",
+        "chat.completions.create JSON and stream",
+        "responses.create JSON and responses.stream lifecycle",
+        "responses.retrieve, delete, and post-delete 404",
+        "Chat and Responses function tools"
+      ]
+    },
+    "runtime_assets": {
+      "status": "pass_for_bound_local_target",
+      "bundle_manifest": "output/http-runtime-assets-rc7-20260806/manifest.json",
+      "bundle_manifest_sha256": "e3a0532c2be10899b4bdfd6919150849dfe7c049910d9bc4238528f5e5f0babe",
+      "manifest_file_count": 42,
+      "plugin_and_config_hashes_verified": true,
+      "full_model_identity_before_readiness": {
+        "files": 12,
+        "bytes": 19705459812,
+        "fingerprint": "eb05132e47fe0fd1dc42fa3082e7241696ed1449dec246a3cc14bef4af21d7ec"
+      },
+      "graph_helpers_and_all_referenced_opencl_sources_bundled": true,
+      "openvino_license_and_third_party_notices_bundled": true,
+      "project_apache_2_license_and_publication_policy_bundled": true,
+      "smoked_rc1_runtime_payload_files_unchanged": 33,
+      "real_http_smoke_executed_from_identical_runtime_payload": true,
+      "runtime_payload_identity_artifact": "output/http-runtime-assets-identity-rc7-20260806/result.json",
+      "runtime_payload_identity_artifact_sha256": "2fd40063fe63516b67d2e96deea060e1c3d1446be6b69d1876f5a4b0884144e2",
+      "short_plugin_source_rebuild": {
+        "status": "bit_identical",
+        "artifact": "output/http-openvino-source-rebuild-20260806/result.json",
+        "artifact_sha256": "b160eeeedd144f864e277e544f6806101b32f8f3c228815870ce748cceef1583",
+        "source_files_verified": 50,
+        "plugin_bytes": 51325408,
+        "plugin_sha256": "b63eede5177f4f9e05d02e97d9f24f52b4289504c2a7c7b4e06c580d1d880e12"
+      },
+      "long_plugin_source_rebuild": {
+        "status": "bit_identical",
+        "artifact": "output/http-openvino-long-source-rebuild-20260806/result.json",
+        "artifact_sha256": "86f8b04fa7f62046cdf408a840469ca9ce59a8964c1adc1ca573113f12b1936d",
+        "source_files_verified": 50,
+        "profile_delta_files": 3,
+        "plugin_bytes": 51296736,
+        "plugin_sha256": "01c04ced415a7b7a5e5bda77a995b2b97b68eb3d9f2c5f3396844d042ddda269"
+      },
+      "embedded_rpath_inhibited_dependency_preflight": true
+    },
+    "python_distribution": {
+      "status": "pass",
+      "wheel": "output/http-service-dist-rc8-20260806/intel_qwen36_server-0.1.0-py3-none-any.whl",
+      "sha256": "e493d88b0d52d9b33548ee3b8163c9e5549be5155d35176bfdf533dc08394643",
+      "license_expression": "Apache-2.0",
+      "offline_wheelhouse_manifest": "output/http-python-wheelhouse-rc12-20260806/manifest.json",
+      "offline_wheelhouse_manifest_sha256": "fa6d57c30668740d4babe7037c1ca1795280758aebe6d9f009b3c5f429a5a66b",
+      "wheel_count": 14,
+      "source_record_files_verified": 1011,
+      "deterministic_repeat_manifest_match": true,
+      "fresh_venv_offline_install": true,
+      "hash_required_install": true,
+      "offline_pip_bootstrap_version": "26.2.1",
+      "pip_check": true,
+      "runtime_build_identity_verified": true,
+      "full_real_http_smoke_from_offline_install": true,
+      "final_wheel_payload_identical_to_smoked_wheelhouse": true,
+      "wheelhouse_payload_identity_artifact": "output/http-python-wheelhouse-identity-rc12-20260806/result.json",
+      "wheelhouse_payload_identity_artifact_sha256": "02a9523384cf50e418683330829c6aeee6c3b73783af19a6a034881a9ec583a1"
+    },
+    "native_deployment": {
+      "systemd_unit": "deploy/systemd/iq36.service",
+      "systemd_analyze_security_exposure": 1.7,
+      "systemd_analyze_security_rating": "OK",
+      "hardened_mock_http_transient_unit": "pass",
+      "hardened_real_openvino_worker_and_chat_transient_unit": "pass",
+      "production_paths_outside_protected_home_required": true
+    },
+    "security": {
+      "status": "pass_for_scanned_scope",
+      "dependency_audit_tool": "pip-audit 2.10.1",
+      "dependency_audit_service": "OSV",
+      "dependency_audit": "output/http-service-security-20260806/pip-audit-index-rc12.json",
+      "dependency_audit_sha256": "25ec88b84edb7303c038821e878d0be7128f2e3703fedd055fc71a15f1f125ec",
+      "index_resolvable_dependency_count": 10,
+      "known_vulnerabilities": 0,
+      "non_index_distributions": [
+        "openvino",
+        "openvino-genai",
+        "openvino-tokenizers",
+        "intel-qwen36-server"
+      ],
+      "non_index_security_evidence": "exact wheel hashes, installed RECORD verification, source provenance, service tests, and release scan",
+      "release_file_audit": "output/http-service-security-20260806/release-audit-rc10.json",
+      "release_file_audit_sha256": "e5f2ed550df3400c12064192786e6f0ad5fc506bdb1fb06146b6e42647ba73cf",
+      "text_files_checked": 2202,
+      "runtime_bundle_included_in_release_scan": true,
+      "high_confidence_secret_or_private_hostname_findings": 0,
+      "security_policy": "SECURITY.md"
+    },
+    "regression": {
+      "seq2300_cold_product_gate_remains_bound": true,
+      "cold_no_prefix_and_prefix_hit_artifacts_are_separate": true,
+      "service_greedy_output_matches_bound_direct_worker_cases": true
+    },
+    "public_release_blockers": {
+      "repository_license_selected": true,
+      "repository_license": "Apache-2.0",
+      "upstream_model_identity_and_apache_2_license_evidenced": true,
+      "exact_locked_ir_source_revision_and_export_invocation_recorded": false,
+      "locked_ir_reproducibility_boundary_documented": true,
+      "locked_ir_distribution_policy_selected": true,
+      "locked_ir_distribution_policy": "external_exact_hash_prerequisite",
+      "owner_source_publication_authorized": true,
+      "model_redistribution_authorized": false,
+      "exact_short_plugin_source_recipe_available": true,
+      "exact_long_plugin_source_recipe_available": true,
+      "exact_long_plugin_binary_published": false,
+      "exact_python_runtime_binaries_published": false
+    }
+  },
+  "performance_lanes": {
+    "cold_no_prefix": {
+      "source": "benchmarks/intel-qwen36-35b-a3b-gguf-q4km/acceptance-matrix.json",
+      "unchanged": true
+    },
+    "resident_no_prefix": {
+      "compile_time_excluded": true,
+      "queue_time_reported_separately": true,
+      "ttft_prefill_decode_total_reported": true
+    },
+    "prefix_hit_service": {
+      "cached_token_count_reported": true,
+      "state_restore_time_reported": true,
+      "uncached_control_required": true,
+      "exact_generated_token_equivalence_required_for_greedy": true
+    }
+  }
+}

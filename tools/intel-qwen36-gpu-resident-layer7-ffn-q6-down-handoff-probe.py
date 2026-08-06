@@ -1,0 +1,2176 @@
+#!/usr/bin/env python3
+"""Run the resident GPU layer-7 FFN Q6 down handoff probe."""
+
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import hashlib
+import importlib.util
+import shlex
+from pathlib import Path
+from types import ModuleType
+from typing import Any
+
+import iq36_local
+
+
+ROOT = Path(__file__).resolve().parents[1]
+V_Q6_TOOL = Path(__file__).with_name(
+    "intel-qwen36-gpu-resident-layer7-full-attn-v-q6-handoff-probe.py"
+)
+WORKSTREAM = "intel-qwen36-35b-a3b-gguf-q4km"
+SCHEMA_VERSION = "intel-qwen36-gpu-resident-layer7-ffn-q6-down-handoff-probe-v0"
+DEFAULT_HOST = "local"
+DEFAULT_MODEL = "/home/intel/models/gguf/qwen3.6-35b-a3b-q4_k_m.gguf"
+DEFAULT_ENV_SCRIPT = "/home/intel/intel-box-run/current/tools/intel/activate-intel-box-env.sh"
+DEFAULT_REMOTE_ROOT = "/home/intel/intel-qwen36-gpu"
+DEFAULT_ORACLE_BUNDLE = ROOT / "oracle/r0-oracle-bundle-20260627T060028Z"
+DEFAULT_ALL_HISTORY = ROOT / "output/r1-full-attn-all-history-capture-20260627T145615Z/history.json"
+OPENCL_SOURCE = ROOT / "engine/gpu/opencl/q4x8_matvec.cl"
+FFN_PAYLOAD_ROOT = ROOT / "output/r0-boundary-capture-conv-state-filter-probe-20260630T000001Z/remote-output/payloads"
+
+
+def load_v_q6_tool() -> ModuleType:
+  spec = importlib.util.spec_from_file_location("iq36_layer7_v_q6_probe", V_Q6_TOOL)
+  if spec is None or spec.loader is None:
+    raise SystemExit(f"failed to load layer7 V Q6 tool: {V_Q6_TOOL}")
+  module = importlib.util.module_from_spec(spec)
+  spec.loader.exec_module(module)
+  return module
+
+
+V_Q6 = load_v_q6_tool()
+CORE = V_Q6.CORE
+L7_INPUT = V_Q6.L7_INPUT
+TWO = V_Q6.TWO
+PRECONV = V_Q6.PRECONV
+
+
+FFN_PAYLOAD_SPECS = {
+    "l7_ffn_topk": ("l7_ffn_moe_topk.bin", "ffn_moe_topk-7__tok15__ord*.bin", 32),
+    "l7_ffn_weights_norm": ("l7_ffn_moe_weights_norm.bin", "ffn_moe_weights_norm-7__tok15__ord*.bin", 32),
+    "l7_ffn_gate_up": ("l7_ffn_moe_gate_up.bin", "ffn_moe_gate_up-7__tok15__ord*.bin", 32768),
+    "l7_ffn_swiglu": ("l7_ffn_moe_swiglu.bin", "ffn_moe_swiglu-7__tok15__ord*.bin", 16384),
+    "l7_ffn_down": ("l7_ffn_moe_down.bin", "ffn_moe_down-7__tok15__ord*.bin", 65536),
+    "l7_ffn_weighted": ("l7_ffn_moe_weighted.bin", "ffn_moe_weighted-7__tok15__ord*.bin", 65536),
+    "l7_ffn_moe_out": ("l7_ffn_moe_out.bin", "ffn_moe_out-7__tok15__ord*.bin", 8192),
+    "l7_ffn_shexp": ("l7_ffn_shexp.bin", "ffn_shexp-7__tok15__ord*.bin", 8192),
+    "l7_shared_gate": ("l7_shared_expert_gate.bin", "shared_expert_gate-7__tok15__ord*.bin", 4),
+    "l7_shared_gate_sigmoid": (
+        "l7_shared_expert_gate_sigmoid.bin",
+        "shared_expert_gate_sigmoid-7__tok15__ord*.bin",
+        4,
+    ),
+    "l7_ffn_shexp_gated": ("l7_ffn_shexp_gated.bin", "ffn_shexp_gated-7__tok15__ord*.bin", 8192),
+    "l7_ffn_out": ("l7_ffn_out.bin", "ffn_out-7__tok15__ord*.bin", 8192),
+}
+
+
+ROWSTRIPE_Q6_OPENCL = r'''
+
+__kernel void q6k_selected_down_matvec_rowstripe(
+    __global const uchar* selected_scratch,
+    __global const char* q8_qs,
+    __global const float* q8_d,
+    uint rows_per_expert,
+    uint blocks_per_row,
+    uint rows_per_tile,
+    __global float* out) {
+  const uint flat_row = (uint)get_global_id(0);
+  const uint selected = flat_row / rows_per_expert;
+  const uint local_row = flat_row - selected * rows_per_expert;
+  const uint row_tile_count =
+      (rows_per_expert + rows_per_tile - 1U) / rows_per_tile;
+  const uint row_tile = local_row / rows_per_tile;
+  const uint row_lane = local_row - row_tile * rows_per_tile;
+  const uint tile_block_bytes = rows_per_tile * 210U;
+  __global const char* expert_q8 =
+      q8_qs + (ulong)selected * (ulong)blocks_per_row * 256UL;
+  __global const float* expert_q8_d =
+      q8_d + (ulong)selected * (ulong)blocks_per_row;
+  float sum = 0.0f;
+  for (uint block_index = 0; block_index < blocks_per_row; ++block_index) {
+    __global const uchar* tile =
+        selected_scratch +
+        (((ulong)selected * (ulong)row_tile_count + (ulong)row_tile) *
+             (ulong)blocks_per_row +
+         (ulong)block_index) *
+            (ulong)tile_block_bytes;
+    __global const uchar* ql0 = tile;
+    __global const uchar* qh0 = ql0 + (ulong)rows_per_tile * 64UL;
+    __global const uchar* ql1 = qh0 + (ulong)rows_per_tile * 32UL;
+    __global const uchar* qh1 = ql1 + (ulong)rows_per_tile * 64UL;
+    __global const char* scales =
+        (__global const char*)(qh1 + (ulong)rows_per_tile * 32UL);
+    __global const uchar* d_base =
+        (__global const uchar*)scales + (ulong)rows_per_tile * 16UL;
+    __global const char* q8 = expert_q8 + (ulong)block_index * 256UL;
+    const float combined_scale =
+        half_to_float(load_le16(d_base + (ulong)row_lane * 2UL)) *
+        expert_q8_d[block_index];
+    int lane_sums[8];
+    for (int lane = 0; lane < 8; ++lane) {
+      lane_sums[lane] = 0;
+    }
+    for (int half_index = 0; half_index < 2; ++half_index) {
+      __global const uchar* ql =
+          (half_index == 0 ? ql0 : ql1) + (ulong)row_lane * 64UL;
+      __global const uchar* qh =
+          (half_index == 0 ? qh0 : qh1) + (ulong)row_lane * 32UL;
+      __global const char* half_scales =
+          scales + (ulong)row_lane * 16UL + (ulong)half_index * 8UL;
+      const int base = half_index * 128;
+      for (int scale_group = 0; scale_group < 2; ++scale_group) {
+        const int lane_begin = scale_group * 16;
+        const int scale0 = (int)half_scales[scale_group];
+        const int scale1 = (int)half_scales[scale_group + 2];
+        const int scale2 = (int)half_scales[scale_group + 4];
+        const int scale3 = (int)half_scales[scale_group + 6];
+        for (int lane = lane_begin; lane < lane_begin + 16; ++lane) {
+          const int high = (int)qh[lane];
+          const int lane_index = lane & 7;
+          lane_sums[lane_index] +=
+              scale0 * (int)q8[base + lane] *
+              (((int)(ql[lane] & (uchar)15) | (((high >> 0) & 3) << 4)) - 32);
+          lane_sums[lane_index] +=
+              scale1 * (int)q8[base + 32 + lane] *
+              (((int)(ql[32 + lane] & (uchar)15) | (((high >> 2) & 3) << 4)) - 32);
+          lane_sums[lane_index] +=
+              scale2 * (int)q8[base + 64 + lane] *
+              (((int)(ql[lane] >> 4) | (((high >> 4) & 3) << 4)) - 32);
+          lane_sums[lane_index] +=
+              scale3 * (int)q8[base + 96 + lane] *
+              (((int)(ql[32 + lane] >> 4) | (((high >> 6) & 3) << 4)) - 32);
+        }
+      }
+    }
+    for (int lane = 0; lane < 8; ++lane) {
+      sum += combined_scale * (float)lane_sums[lane];
+    }
+  }
+  out[flat_row] = sum;
+}
+'''
+
+
+SELECTED_Q6_EXTRA_CPP = r'''
+
+constexpr int kQ6KBlockBytes = 210;
+
+struct Layer7SelectedQ8Planes {
+  std::vector<std::int8_t> qs;
+  std::vector<float> d;
+  std::uint64_t blocks_per_expert = 0;
+};
+
+int NearestIntLayer7Q6(float value) {
+  float shifted = value + 12582912.0f;
+  int bits = 0;
+  std::memcpy(&bits, &shifted, sizeof(bits));
+  return (bits & 0x007fffff) - 0x00400000;
+}
+
+Layer7SelectedQ8Planes QuantizePerExpertQ8KLayer7Q6(
+    const std::vector<float>& input,
+    std::uint64_t selected_count,
+    std::uint64_t values_per_expert) {
+  constexpr std::uint64_t kQ8BlockValuesLayer7 = 256;
+  Require(values_per_expert % kQ8BlockValuesLayer7 == 0,
+          "layer7 selected Q8_K input requires 256-aligned experts");
+  Require(input.size() == selected_count * values_per_expert,
+          "layer7 selected Q8_K input size mismatch");
+  Layer7SelectedQ8Planes planes;
+  planes.blocks_per_expert = values_per_expert / kQ8BlockValuesLayer7;
+  planes.qs.assign(input.size(), 0);
+  planes.d.assign(static_cast<std::size_t>(selected_count * planes.blocks_per_expert), 0.0f);
+  for (std::uint64_t selected = 0; selected < selected_count; ++selected) {
+    for (std::uint64_t block = 0; block < planes.blocks_per_expert; ++block) {
+      const auto value_base =
+          static_cast<std::size_t>(selected * values_per_expert +
+                                   block * kQ8BlockValuesLayer7);
+      float max = 0.0f;
+      float amax = 0.0f;
+      for (int i = 0; i < 256; ++i) {
+        const float abs_value =
+            std::abs(input[value_base + static_cast<std::size_t>(i)]);
+        if (abs_value > amax) {
+          amax = abs_value;
+          max = input[value_base + static_cast<std::size_t>(i)];
+        }
+      }
+      if (amax == 0.0f) {
+        continue;
+      }
+      const float iscale = -127.0f / max;
+      for (int i = 0; i < 256; ++i) {
+        const int quantized =
+            std::min(127, NearestIntLayer7Q6(
+                              iscale * input[value_base + static_cast<std::size_t>(i)]));
+        planes.qs[value_base + static_cast<std::size_t>(i)] =
+            static_cast<std::int8_t>(quantized);
+      }
+      planes.d[static_cast<std::size_t>(selected * planes.blocks_per_expert + block)] =
+          1.0f / iscale;
+    }
+  }
+  return planes;
+}
+
+struct Layer7DeviceQ8Run {
+  Layer7SelectedQ8Planes q8;
+  double q8_quantize_min_us = 0.0;
+  double q8_quantize_mean_us = 0.0;
+  std::uint64_t q8_quantize_global_work_items = 0;
+  std::string platform_name;
+  std::string device_name;
+  std::string build_log;
+  double program_build_ms = 0.0;
+};
+
+struct Layer7Q8CompareStats {
+  bool size_ok = false;
+  bool passed = false;
+  std::uint64_t qs_mismatch_count = 0;
+  int max_abs_qs_diff = 0;
+  double max_abs_d_diff = 0.0;
+  double rmse_d = 0.0;
+};
+
+Layer7DeviceQ8Run RunDeviceQ8QuantizeLayer7Q6(
+    const std::vector<float>& input,
+    std::uint64_t selected_count,
+    std::uint64_t values_per_expert,
+    const std::string& device_substring,
+    int repeat) {
+  constexpr std::uint64_t kQ8BlockValuesLayer7 = 256;
+  Require(repeat > 0, "layer7 device Q8 repeat must be positive");
+  Require(values_per_expert % kQ8BlockValuesLayer7 == 0,
+          "layer7 device Q8 input requires 256-aligned experts");
+  Require(input.size() == selected_count * values_per_expert,
+          "layer7 device Q8 input size mismatch");
+  Layer7DeviceQ8Run run;
+  run.q8.blocks_per_expert = values_per_expert / kQ8BlockValuesLayer7;
+  run.q8.qs.assign(input.size(), 0);
+  const std::uint64_t block_count = selected_count * run.q8.blocks_per_expert;
+  run.q8.d.assign(static_cast<std::size_t>(block_count), 0.0f);
+
+  OpenClApi api;
+  const auto selected = SelectDevice(api, device_substring);
+  run.platform_name = selected.platform_name;
+  run.device_name = selected.device_name;
+  cl_int err = kClSuccess;
+  cl_context context =
+      api.clCreateContext(nullptr, 1, &selected.device, nullptr, nullptr, &err);
+  Check(err, "clCreateContext(layer7 device Q8)");
+  cl_command_queue queue =
+      api.clCreateCommandQueue(context, selected.device, kClQueueProfilingEnable, &err);
+  Check(err, "clCreateCommandQueue(layer7 device Q8)");
+  const char* source = kOpenClSource;
+  const std::size_t source_len = std::strlen(kOpenClSource);
+  cl_program program =
+      api.clCreateProgramWithSource(context, 1, &source, &source_len, &err);
+  Check(err, "clCreateProgramWithSource(layer7 device Q8)");
+  const auto build_begin = std::chrono::steady_clock::now();
+  err = api.clBuildProgram(program, 1, &selected.device, "", nullptr, nullptr);
+  const auto build_end = std::chrono::steady_clock::now();
+  run.program_build_ms +=
+      std::chrono::duration<double, std::milli>(build_end - build_begin).count();
+  run.build_log += BuildLog(api, program, selected.device);
+  Check(err, "clBuildProgram(layer7 device Q8)");
+  cl_kernel kernel = api.clCreateKernel(program, "q8k_quantize_f32_blocks", &err);
+  Check(err, "clCreateKernel(q8k_quantize_f32_blocks)");
+
+  cl_mem input_buffer = nullptr;
+  cl_mem qs_buffer = nullptr;
+  cl_mem d_buffer = nullptr;
+  try {
+    input_buffer = api.clCreateBuffer(
+        context, kClMemReadOnly, input.size() * sizeof(float), nullptr, &err);
+    Check(err, "clCreateBuffer(layer7 device Q8 input)");
+    qs_buffer = api.clCreateBuffer(
+        context, kClMemWriteOnly,
+        run.q8.qs.size() * sizeof(std::int8_t), nullptr, &err);
+    Check(err, "clCreateBuffer(layer7 device Q8 qs)");
+    d_buffer = api.clCreateBuffer(
+        context, kClMemWriteOnly, run.q8.d.size() * sizeof(float), nullptr, &err);
+    Check(err, "clCreateBuffer(layer7 device Q8 d)");
+    Check(api.clEnqueueWriteBuffer(queue, input_buffer, kClTrue, 0,
+                                   input.size() * sizeof(float), input.data(),
+                                   0, nullptr, nullptr),
+          "clEnqueueWriteBuffer(layer7 device Q8 input)");
+    const cl_uint block_count_arg = static_cast<cl_uint>(block_count);
+    Check(api.clSetKernelArg(kernel, 0, sizeof(input_buffer), &input_buffer),
+          "clSetKernelArg(layer7 device Q8 0)");
+    Check(api.clSetKernelArg(kernel, 1, sizeof(block_count_arg), &block_count_arg),
+          "clSetKernelArg(layer7 device Q8 1)");
+    Check(api.clSetKernelArg(kernel, 2, sizeof(qs_buffer), &qs_buffer),
+          "clSetKernelArg(layer7 device Q8 2)");
+    Check(api.clSetKernelArg(kernel, 3, sizeof(d_buffer), &d_buffer),
+          "clSetKernelArg(layer7 device Q8 3)");
+    const std::size_t global = static_cast<std::size_t>(block_count);
+    std::vector<double> times;
+    times.reserve(static_cast<std::size_t>(repeat));
+    for (int i = 0; i < repeat; ++i) {
+      cl_event event = nullptr;
+      Check(api.clEnqueueNDRangeKernel(queue, kernel, 1, nullptr, &global,
+                                       nullptr, 0, nullptr, &event),
+            "clEnqueueNDRangeKernel(layer7 device Q8)");
+      Check(api.clFinish(queue), "clFinish(layer7 device Q8)");
+      times.push_back(EventUs(api, event));
+      api.clReleaseEvent(event);
+    }
+    Check(api.clEnqueueReadBuffer(queue, qs_buffer, kClTrue, 0,
+                                  run.q8.qs.size() * sizeof(std::int8_t),
+                                  run.q8.qs.data(), 0, nullptr, nullptr),
+          "clEnqueueReadBuffer(layer7 device Q8 qs)");
+    Check(api.clEnqueueReadBuffer(queue, d_buffer, kClTrue, 0,
+                                  run.q8.d.size() * sizeof(float),
+                                  run.q8.d.data(), 0, nullptr, nullptr),
+          "clEnqueueReadBuffer(layer7 device Q8 d)");
+    run.q8_quantize_min_us = Min(times);
+    run.q8_quantize_mean_us = Mean(times);
+    run.q8_quantize_global_work_items = block_count;
+  } catch (...) {
+    ReleaseMem(api, &d_buffer);
+    ReleaseMem(api, &qs_buffer);
+    ReleaseMem(api, &input_buffer);
+    api.clReleaseKernel(kernel);
+    api.clReleaseProgram(program);
+    api.clReleaseCommandQueue(queue);
+    api.clReleaseContext(context);
+    throw;
+  }
+  ReleaseMem(api, &d_buffer);
+  ReleaseMem(api, &qs_buffer);
+  ReleaseMem(api, &input_buffer);
+  api.clReleaseKernel(kernel);
+  api.clReleaseProgram(program);
+  api.clReleaseCommandQueue(queue);
+  api.clReleaseContext(context);
+  return run;
+}
+
+Layer7Q8CompareStats CompareLayer7SelectedQ8(
+    const Layer7SelectedQ8Planes& host,
+    const Layer7SelectedQ8Planes& device) {
+  Layer7Q8CompareStats stats;
+  stats.size_ok =
+      host.blocks_per_expert == device.blocks_per_expert &&
+      host.qs.size() == device.qs.size() &&
+      host.d.size() == device.d.size();
+  if (!stats.size_ok) {
+    return stats;
+  }
+  for (std::size_t i = 0; i < host.qs.size(); ++i) {
+    const int diff =
+        std::abs(static_cast<int>(host.qs[i]) - static_cast<int>(device.qs[i]));
+    if (diff != 0) {
+      stats.qs_mismatch_count += 1;
+    }
+    stats.max_abs_qs_diff = std::max(stats.max_abs_qs_diff, diff);
+  }
+  double sum_sq_d = 0.0;
+  for (std::size_t i = 0; i < host.d.size(); ++i) {
+    const double diff =
+        static_cast<double>(host.d[i]) - static_cast<double>(device.d[i]);
+    const double abs_diff = std::abs(diff);
+    stats.max_abs_d_diff = std::max(stats.max_abs_d_diff, abs_diff);
+    sum_sq_d += diff * diff;
+  }
+  stats.rmse_d =
+      host.d.empty() ? 0.0 : std::sqrt(sum_sq_d / static_cast<double>(host.d.size()));
+  stats.passed =
+      stats.qs_mismatch_count == 0 &&
+      stats.max_abs_qs_diff == 0 &&
+      stats.max_abs_d_diff <= 1.0e-7 &&
+      stats.rmse_d <= 1.0e-8;
+  return stats;
+}
+
+void WriteLayer7Q8Compare(const Layer7Q8CompareStats& stats) {
+  std::cout << "{";
+  std::cout << "\"size_ok\":" << (stats.size_ok ? "true" : "false") << ",";
+  std::cout << "\"passed\":" << (stats.passed ? "true" : "false") << ",";
+  std::cout << "\"qs_mismatch_count\":" << stats.qs_mismatch_count << ",";
+  std::cout << "\"max_abs_qs_diff\":" << stats.max_abs_qs_diff << ",";
+  std::cout << "\"max_abs_d_diff\":" << stats.max_abs_d_diff << ",";
+  std::cout << "\"rmse_d\":" << stats.rmse_d;
+  std::cout << "}";
+}
+
+struct Layer7SelectedQ6RowstripeLayout {
+  std::vector<std::uint8_t> bytes;
+  double conversion_us = 0.0;
+  std::uint64_t rows_per_tile = 0;
+  std::uint64_t row_tile_count = 0;
+};
+
+struct Layer7RowstripeQ6Run {
+  std::vector<float> output;
+  SelectedFfnTiming timing;
+  std::string platform_name;
+  std::string device_name;
+  std::string build_log;
+  double program_build_ms = 0.0;
+  double conversion_us = 0.0;
+  std::uint64_t rows_per_tile = 0;
+  std::uint64_t row_tile_count = 0;
+};
+
+Layer7SelectedQ6RowstripeLayout BuildSelectedQ6RowstripeLayer7(
+    const std::vector<std::uint8_t>& raw,
+    std::uint64_t selected_count,
+    std::uint64_t rows_per_expert,
+    std::uint64_t blocks_per_row,
+    std::uint64_t rows_per_tile) {
+  Require(rows_per_tile > 0, "layer7 selected Q6 rowstripe rows_per_tile must be positive");
+  Require(raw.size() ==
+              static_cast<std::size_t>(selected_count * rows_per_expert *
+                                       blocks_per_row * kQ6KBlockBytes),
+          "layer7 selected Q6 rowstripe raw size mismatch");
+  struct Segment {
+    std::uint64_t offset;
+    std::uint64_t bytes;
+  };
+  constexpr Segment kSegments[] = {
+      {0ULL, 64ULL},
+      {128ULL, 32ULL},
+      {64ULL, 64ULL},
+      {160ULL, 32ULL},
+      {192ULL, 16ULL},
+      {208ULL, 2ULL},
+  };
+  Layer7SelectedQ6RowstripeLayout layout;
+  layout.rows_per_tile = rows_per_tile;
+  layout.row_tile_count = (rows_per_expert + rows_per_tile - 1ULL) / rows_per_tile;
+  layout.bytes.reserve(static_cast<std::size_t>(
+      selected_count * layout.row_tile_count * blocks_per_row *
+      rows_per_tile * kQ6KBlockBytes));
+  const auto conversion_begin = std::chrono::steady_clock::now();
+  for (std::uint64_t selected = 0; selected < selected_count; ++selected) {
+    for (std::uint64_t row_tile = 0; row_tile < layout.row_tile_count; ++row_tile) {
+      for (std::uint64_t block = 0; block < blocks_per_row; ++block) {
+        for (const auto& segment : kSegments) {
+          for (std::uint64_t lane = 0; lane < rows_per_tile; ++lane) {
+            const std::uint64_t row = row_tile * rows_per_tile + lane;
+            if (row >= rows_per_expert) {
+              layout.bytes.insert(
+                  layout.bytes.end(),
+                  static_cast<std::size_t>(segment.bytes),
+                  0U);
+              continue;
+            }
+            const std::uint8_t* src =
+                raw.data() +
+                ((selected * rows_per_expert + row) * blocks_per_row + block) *
+                    kQ6KBlockBytes +
+                segment.offset;
+            layout.bytes.insert(
+                layout.bytes.end(),
+                src,
+                src + static_cast<std::ptrdiff_t>(segment.bytes));
+          }
+        }
+      }
+    }
+  }
+  const auto conversion_end = std::chrono::steady_clock::now();
+  layout.conversion_us =
+      std::chrono::duration<double, std::micro>(conversion_end - conversion_begin).count();
+  Require(layout.bytes.size() ==
+              static_cast<std::size_t>(
+                  selected_count * layout.row_tile_count * blocks_per_row *
+                  rows_per_tile * kQ6KBlockBytes),
+          "layer7 selected Q6 rowstripe byte size mismatch");
+  return layout;
+}
+
+Layer7RowstripeQ6Run RunGpuSelectedDownQ6RowstripeLayer7(
+    const std::vector<std::uint8_t>& selected_raw,
+    const Layer7SelectedQ8Planes& q8,
+    std::uint64_t rows_per_expert,
+    std::uint64_t blocks_per_row,
+    std::uint64_t selected_count,
+    std::uint64_t rows_per_tile,
+    const std::string& device_substring,
+    int repeat) {
+  Require(repeat > 0, "layer7 selected-down Q6 rowstripe repeat must be positive");
+  Require(q8.blocks_per_expert == blocks_per_row,
+          "layer7 selected-down Q6 rowstripe Q8 block count mismatch");
+  Layer7RowstripeQ6Run run;
+  run.output.assign(static_cast<std::size_t>(selected_count * rows_per_expert), 0.0f);
+  const auto layout =
+      BuildSelectedQ6RowstripeLayer7(selected_raw, selected_count, rows_per_expert,
+                                     blocks_per_row, rows_per_tile);
+  run.conversion_us = layout.conversion_us;
+  run.rows_per_tile = layout.rows_per_tile;
+  run.row_tile_count = layout.row_tile_count;
+
+  OpenClApi api;
+  const auto selected = SelectDevice(api, device_substring);
+  run.platform_name = selected.platform_name;
+  run.device_name = selected.device_name;
+
+  cl_int err = kClSuccess;
+  cl_context context =
+      api.clCreateContext(nullptr, 1, &selected.device, nullptr, nullptr, &err);
+  Check(err, "clCreateContext(layer7 selected down q6 rowstripe)");
+  cl_command_queue queue =
+      api.clCreateCommandQueue(context, selected.device, kClQueueProfilingEnable, &err);
+  Check(err, "clCreateCommandQueue(layer7 selected down q6 rowstripe)");
+  const char* source = kOpenClSource;
+  const std::size_t source_len = std::strlen(kOpenClSource);
+  cl_program program =
+      api.clCreateProgramWithSource(context, 1, &source, &source_len, &err);
+  Check(err, "clCreateProgramWithSource(layer7 selected down q6 rowstripe)");
+  const auto build_begin = std::chrono::steady_clock::now();
+  err = api.clBuildProgram(program, 1, &selected.device, "", nullptr, nullptr);
+  const auto build_end = std::chrono::steady_clock::now();
+  run.program_build_ms +=
+      std::chrono::duration<double, std::milli>(build_end - build_begin).count();
+  run.build_log += BuildLog(api, program, selected.device);
+  Check(err, "clBuildProgram(layer7 selected down q6 rowstripe)");
+  cl_kernel kernel =
+      api.clCreateKernel(program, "q6k_selected_down_matvec_rowstripe", &err);
+  Check(err, "clCreateKernel(q6k_selected_down_matvec_rowstripe)");
+
+  cl_mem scratch_buffer = nullptr;
+  cl_mem q8_qs_buffer = nullptr;
+  cl_mem q8_d_buffer = nullptr;
+  cl_mem output_buffer = nullptr;
+  try {
+    scratch_buffer =
+        api.clCreateBuffer(context, kClMemReadOnly, layout.bytes.size(), nullptr, &err);
+    Check(err, "clCreateBuffer(layer7 selected down q6 rowstripe scratch)");
+    q8_qs_buffer =
+        api.clCreateBuffer(context, kClMemReadOnly,
+                           q8.qs.size() * sizeof(std::int8_t), nullptr, &err);
+    Check(err, "clCreateBuffer(layer7 selected down q6 rowstripe q8 qs)");
+    q8_d_buffer =
+        api.clCreateBuffer(context, kClMemReadOnly,
+                           q8.d.size() * sizeof(float), nullptr, &err);
+    Check(err, "clCreateBuffer(layer7 selected down q6 rowstripe q8 d)");
+    output_buffer =
+        api.clCreateBuffer(context, kClMemWriteOnly,
+                           run.output.size() * sizeof(float), nullptr, &err);
+    Check(err, "clCreateBuffer(layer7 selected down q6 rowstripe output)");
+    Check(api.clEnqueueWriteBuffer(queue, scratch_buffer, kClTrue, 0,
+                                   layout.bytes.size(), layout.bytes.data(),
+                                   0, nullptr, nullptr),
+          "clEnqueueWriteBuffer(layer7 selected down q6 rowstripe scratch)");
+    Check(api.clEnqueueWriteBuffer(queue, q8_qs_buffer, kClTrue, 0,
+                                   q8.qs.size() * sizeof(std::int8_t),
+                                   q8.qs.data(), 0, nullptr, nullptr),
+          "clEnqueueWriteBuffer(layer7 selected down q6 rowstripe q8 qs)");
+    Check(api.clEnqueueWriteBuffer(queue, q8_d_buffer, kClTrue, 0,
+                                   q8.d.size() * sizeof(float), q8.d.data(),
+                                   0, nullptr, nullptr),
+          "clEnqueueWriteBuffer(layer7 selected down q6 rowstripe q8 d)");
+    const cl_uint rows_per_expert_arg = static_cast<cl_uint>(rows_per_expert);
+    const cl_uint blocks_per_row_arg = static_cast<cl_uint>(blocks_per_row);
+    const cl_uint rows_per_tile_arg = static_cast<cl_uint>(rows_per_tile);
+    Check(api.clSetKernelArg(kernel, 0, sizeof(scratch_buffer), &scratch_buffer),
+          "clSetKernelArg(layer7 selected down q6 rowstripe 0)");
+    Check(api.clSetKernelArg(kernel, 1, sizeof(q8_qs_buffer), &q8_qs_buffer),
+          "clSetKernelArg(layer7 selected down q6 rowstripe 1)");
+    Check(api.clSetKernelArg(kernel, 2, sizeof(q8_d_buffer), &q8_d_buffer),
+          "clSetKernelArg(layer7 selected down q6 rowstripe 2)");
+    Check(api.clSetKernelArg(kernel, 3, sizeof(rows_per_expert_arg), &rows_per_expert_arg),
+          "clSetKernelArg(layer7 selected down q6 rowstripe 3)");
+    Check(api.clSetKernelArg(kernel, 4, sizeof(blocks_per_row_arg), &blocks_per_row_arg),
+          "clSetKernelArg(layer7 selected down q6 rowstripe 4)");
+    Check(api.clSetKernelArg(kernel, 5, sizeof(rows_per_tile_arg), &rows_per_tile_arg),
+          "clSetKernelArg(layer7 selected down q6 rowstripe 5)");
+    Check(api.clSetKernelArg(kernel, 6, sizeof(output_buffer), &output_buffer),
+          "clSetKernelArg(layer7 selected down q6 rowstripe 6)");
+    const std::size_t global = run.output.size();
+    constexpr std::size_t kLocalSize = 64;
+    const std::size_t* local =
+        (global % kLocalSize == 0) ? &kLocalSize : nullptr;
+    std::vector<double> times;
+    times.reserve(static_cast<std::size_t>(repeat));
+    for (int i = 0; i < repeat; ++i) {
+      cl_event event = nullptr;
+      Check(api.clEnqueueNDRangeKernel(queue, kernel, 1, nullptr, &global,
+                                       local, 0, nullptr, &event),
+            "clEnqueueNDRangeKernel(layer7 selected down q6 rowstripe)");
+      Check(api.clFinish(queue), "clFinish(layer7 selected down q6 rowstripe)");
+      times.push_back(EventUs(api, event));
+      api.clReleaseEvent(event);
+    }
+    Check(api.clEnqueueReadBuffer(queue, output_buffer, kClTrue, 0,
+                                  run.output.size() * sizeof(float),
+                                  run.output.data(), 0, nullptr, nullptr),
+          "clEnqueueReadBuffer(layer7 selected down q6 rowstripe output)");
+    run.timing.down_min_us = Min(times);
+    run.timing.down_mean_us = Mean(times);
+    run.timing.down_global_work_items = run.output.size();
+    run.timing.down_kernel_launches = 1;
+  } catch (...) {
+    ReleaseMem(api, &output_buffer);
+    ReleaseMem(api, &q8_d_buffer);
+    ReleaseMem(api, &q8_qs_buffer);
+    ReleaseMem(api, &scratch_buffer);
+    api.clReleaseKernel(kernel);
+    api.clReleaseProgram(program);
+    api.clReleaseCommandQueue(queue);
+    api.clReleaseContext(context);
+    throw;
+  }
+  ReleaseMem(api, &output_buffer);
+  ReleaseMem(api, &q8_d_buffer);
+  ReleaseMem(api, &q8_qs_buffer);
+  ReleaseMem(api, &scratch_buffer);
+  api.clReleaseKernel(kernel);
+  api.clReleaseProgram(program);
+  api.clReleaseCommandQueue(queue);
+  api.clReleaseContext(context);
+  return run;
+}
+
+std::vector<float> RunGpuSelectedDownQ6Layer7(
+    const std::vector<std::uint8_t>& selected_raw,
+    const Layer7SelectedQ8Planes& q8,
+    std::uint64_t rows_per_expert,
+    std::uint64_t blocks_per_row,
+    std::uint64_t selected_count,
+    const std::string& device_substring,
+    int repeat,
+    SelectedFfnTiming* timing,
+    std::string* platform_name,
+    std::string* device_name,
+    std::string* build_log,
+    double* program_build_ms) {
+  Require(selected_raw.size() ==
+              static_cast<std::size_t>(selected_count * rows_per_expert *
+                                       blocks_per_row * kQ6KBlockBytes),
+          "layer7 selected-down Q6 raw byte size mismatch");
+  Require(q8.blocks_per_expert == blocks_per_row,
+          "layer7 selected-down Q8 block count mismatch");
+  std::vector<float> output(
+      static_cast<std::size_t>(selected_count * rows_per_expert), 0.0f);
+  OpenClApi api;
+  const auto selected = SelectDevice(api, device_substring);
+  *platform_name = selected.platform_name;
+  *device_name = selected.device_name;
+
+  cl_int err = kClSuccess;
+  cl_context context =
+      api.clCreateContext(nullptr, 1, &selected.device, nullptr, nullptr, &err);
+  Check(err, "clCreateContext(layer7 selected down q6)");
+  cl_command_queue queue =
+      api.clCreateCommandQueue(context, selected.device, kClQueueProfilingEnable, &err);
+  Check(err, "clCreateCommandQueue(layer7 selected down q6)");
+  const char* source = kOpenClSource;
+  const std::size_t source_len = std::strlen(kOpenClSource);
+  cl_program program =
+      api.clCreateProgramWithSource(context, 1, &source, &source_len, &err);
+  Check(err, "clCreateProgramWithSource(layer7 selected down q6)");
+  const auto build_begin = std::chrono::steady_clock::now();
+  err = api.clBuildProgram(program, 1, &selected.device, "", nullptr, nullptr);
+  const auto build_end = std::chrono::steady_clock::now();
+  *program_build_ms +=
+      std::chrono::duration<double, std::milli>(build_end - build_begin).count();
+  *build_log += BuildLog(api, program, selected.device);
+  Check(err, "clBuildProgram(layer7 selected down q6)");
+  cl_kernel kernel = api.clCreateKernel(program, "q6k_selected_down_matvec_row", &err);
+  Check(err, "clCreateKernel(q6k_selected_down_matvec_row)");
+
+  cl_mem raw_buffer = nullptr;
+  cl_mem q8_qs_buffer = nullptr;
+  cl_mem q8_d_buffer = nullptr;
+  cl_mem output_buffer = nullptr;
+  try {
+    raw_buffer =
+        api.clCreateBuffer(context, kClMemReadOnly, selected_raw.size(), nullptr, &err);
+    Check(err, "clCreateBuffer(layer7 selected down q6 raw)");
+    q8_qs_buffer =
+        api.clCreateBuffer(context, kClMemReadOnly,
+                           q8.qs.size() * sizeof(std::int8_t), nullptr, &err);
+    Check(err, "clCreateBuffer(layer7 selected down q8 qs)");
+    q8_d_buffer =
+        api.clCreateBuffer(context, kClMemReadOnly,
+                           q8.d.size() * sizeof(float), nullptr, &err);
+    Check(err, "clCreateBuffer(layer7 selected down q8 d)");
+    output_buffer =
+        api.clCreateBuffer(context, kClMemWriteOnly,
+                           output.size() * sizeof(float), nullptr, &err);
+    Check(err, "clCreateBuffer(layer7 selected down output)");
+    Check(api.clEnqueueWriteBuffer(queue, raw_buffer, kClTrue, 0,
+                                   selected_raw.size(), selected_raw.data(),
+                                   0, nullptr, nullptr),
+          "clEnqueueWriteBuffer(layer7 selected down q6 raw)");
+    Check(api.clEnqueueWriteBuffer(queue, q8_qs_buffer, kClTrue, 0,
+                                   q8.qs.size() * sizeof(std::int8_t),
+                                   q8.qs.data(), 0, nullptr, nullptr),
+          "clEnqueueWriteBuffer(layer7 selected down q8 qs)");
+    Check(api.clEnqueueWriteBuffer(queue, q8_d_buffer, kClTrue, 0,
+                                   q8.d.size() * sizeof(float), q8.d.data(),
+                                   0, nullptr, nullptr),
+          "clEnqueueWriteBuffer(layer7 selected down q8 d)");
+    const cl_uint rows_per_expert_arg = static_cast<cl_uint>(rows_per_expert);
+    const cl_uint blocks_per_row_arg = static_cast<cl_uint>(blocks_per_row);
+    Check(api.clSetKernelArg(kernel, 0, sizeof(raw_buffer), &raw_buffer),
+          "clSetKernelArg(layer7 selected down q6 0)");
+    Check(api.clSetKernelArg(kernel, 1, sizeof(q8_qs_buffer), &q8_qs_buffer),
+          "clSetKernelArg(layer7 selected down q6 1)");
+    Check(api.clSetKernelArg(kernel, 2, sizeof(q8_d_buffer), &q8_d_buffer),
+          "clSetKernelArg(layer7 selected down q6 2)");
+    Check(api.clSetKernelArg(kernel, 3, sizeof(rows_per_expert_arg), &rows_per_expert_arg),
+          "clSetKernelArg(layer7 selected down q6 3)");
+    Check(api.clSetKernelArg(kernel, 4, sizeof(blocks_per_row_arg), &blocks_per_row_arg),
+          "clSetKernelArg(layer7 selected down q6 4)");
+    Check(api.clSetKernelArg(kernel, 5, sizeof(output_buffer), &output_buffer),
+          "clSetKernelArg(layer7 selected down q6 5)");
+    const std::size_t global = output.size();
+    std::vector<double> times;
+    times.reserve(static_cast<std::size_t>(repeat));
+    for (int i = 0; i < repeat; ++i) {
+      cl_event event = nullptr;
+      Check(api.clEnqueueNDRangeKernel(queue, kernel, 1, nullptr, &global,
+                                       nullptr, 0, nullptr, &event),
+            "clEnqueueNDRangeKernel(layer7 selected down q6)");
+      Check(api.clFinish(queue), "clFinish(layer7 selected down q6)");
+      times.push_back(EventUs(api, event));
+      api.clReleaseEvent(event);
+    }
+    Check(api.clEnqueueReadBuffer(queue, output_buffer, kClTrue, 0,
+                                  output.size() * sizeof(float), output.data(),
+                                  0, nullptr, nullptr),
+          "clEnqueueReadBuffer(layer7 selected down q6 output)");
+    timing->down_min_us = Min(times);
+    timing->down_mean_us = Mean(times);
+    timing->down_global_work_items = output.size();
+    timing->down_kernel_launches = 1;
+  } catch (...) {
+    ReleaseMem(api, &output_buffer);
+    ReleaseMem(api, &q8_d_buffer);
+    ReleaseMem(api, &q8_qs_buffer);
+    ReleaseMem(api, &raw_buffer);
+    api.clReleaseKernel(kernel);
+    api.clReleaseProgram(program);
+    api.clReleaseCommandQueue(queue);
+    api.clReleaseContext(context);
+    throw;
+  }
+  ReleaseMem(api, &output_buffer);
+  ReleaseMem(api, &q8_d_buffer);
+  ReleaseMem(api, &q8_qs_buffer);
+  ReleaseMem(api, &raw_buffer);
+  api.clReleaseKernel(kernel);
+  api.clReleaseProgram(program);
+  api.clReleaseCommandQueue(queue);
+  api.clReleaseContext(context);
+  return output;
+}
+
+struct Layer7FusedSelectedQ6Run {
+  std::vector<float> down;
+  iq36::GpuQ4X8SwiGluQ6DownHandoffTiming timing;
+  std::string platform_name;
+  std::string device_name;
+  std::string build_log;
+  double program_build_ms = 0.0;
+};
+
+std::vector<std::int32_t> SortedExpertIdsLayer7Q6(
+    const std::vector<std::int32_t>& expert_ids) {
+  auto sorted = expert_ids;
+  std::sort(sorted.begin(), sorted.end());
+  return sorted;
+}
+
+template <typename T>
+std::vector<T> ReorderLayer7SelectedChunks(
+    const std::vector<T>& sorted_values,
+    const std::vector<std::int32_t>& sorted_ids,
+    const std::vector<std::int32_t>& requested_ids,
+    std::uint64_t values_per_expert) {
+  Require(sorted_values.size() ==
+              static_cast<std::size_t>(values_per_expert * sorted_ids.size()),
+          "layer7 selected chunk reorder size mismatch");
+  std::vector<T> reordered(sorted_values.size());
+  for (std::size_t out = 0; out < requested_ids.size(); ++out) {
+    const auto found =
+        std::find(sorted_ids.begin(), sorted_ids.end(), requested_ids[out]);
+    Require(found != sorted_ids.end(), "layer7 selected chunk reorder expert missing");
+    const std::size_t in = static_cast<std::size_t>(found - sorted_ids.begin());
+    std::copy(sorted_values.begin() +
+                  static_cast<std::ptrdiff_t>(in * values_per_expert),
+              sorted_values.begin() +
+                  static_cast<std::ptrdiff_t>((in + 1) * values_per_expert),
+              reordered.begin() +
+                  static_cast<std::ptrdiff_t>(out * values_per_expert));
+  }
+  return reordered;
+}
+
+Layer7FusedSelectedQ6Run RunLayer7ResidentFusedSelectedQ6(
+    const std::string& model_path,
+    const iq36::GgufTensorInfo& gate_up_tensor,
+    const iq36::GgufTensorInfo& down_tensor,
+    const std::vector<float>& attn_post_norm,
+    const std::vector<std::int32_t>& expert_ids,
+    bool sorted_storage,
+    bool concat_from_experts,
+    bool deferred_uploads,
+    bool direct_expert8,
+    bool q6_rowstripe_experts,
+    const std::string& device_substring,
+    int repeat) {
+  Require(repeat > 0, "layer7 fused selected Q6 repeat must be positive");
+  Require(gate_up_tensor.type == 12,
+          "layer7 fused selected gate-up tensor must be Q4_K");
+  Require(down_tensor.type == 14,
+          "layer7 fused selected down tensor must be Q6_K");
+  Require(attn_post_norm.size() == kHiddenSize,
+          "layer7 fused selected input size mismatch");
+  Require(expert_ids.size() == kExpertUsedCount,
+          "layer7 fused selected expert id count mismatch");
+  Require(gate_up_tensor.dims ==
+              std::vector<std::uint64_t>{kHiddenSize, kGateUpRowsPerExpert,
+                                         kExpertCount},
+          "layer7 fused selected gate-up tensor shape mismatch");
+  Require(down_tensor.dims ==
+              std::vector<std::uint64_t>{kIntermediateSize, kHiddenSize,
+                                         kExpertCount},
+          "layer7 fused selected down tensor shape mismatch");
+
+  const std::uint64_t gate_up_blocks_per_row = kHiddenSize / 256;
+  const std::uint64_t down_blocks_per_row = kIntermediateSize / 256;
+  const std::uint64_t gate_up_row_nbytes =
+      iq36::ggml_tensor_nbytes(gate_up_tensor.type,
+                               std::vector<std::uint64_t>{kHiddenSize});
+  const std::uint64_t down_row_nbytes =
+      iq36::ggml_tensor_nbytes(down_tensor.type,
+                               std::vector<std::uint64_t>{kIntermediateSize});
+  Require(gate_up_row_nbytes == gate_up_blocks_per_row * kQ4KBlockBytes,
+          "layer7 fused selected gate-up Q4 row byte mismatch");
+  Require(down_row_nbytes == down_blocks_per_row * kQ6KBlockBytes,
+          "layer7 fused selected down Q6 row byte mismatch");
+
+  std::ifstream model(model_path, std::ios::binary);
+  Require(static_cast<bool>(model),
+          "layer7 fused selected model open failed");
+  const auto storage_expert_ids =
+      sorted_storage ? SortedExpertIdsLayer7Q6(expert_ids) : expert_ids;
+  const auto q8_attn = iq36::QuantizeQ8KInputPlanes(attn_post_norm);
+
+  iq36::GpuQ4X8MatvecRunner runner(device_substring, kOpenClSource);
+  std::uint64_t gate_up_handle = 0;
+  std::uint64_t down_handle = 0;
+  std::vector<std::uint64_t> gate_up_handles;
+  std::vector<std::uint64_t> down_handles;
+  if (concat_from_experts || direct_expert8) {
+    gate_up_handles.reserve(storage_expert_ids.size());
+    down_handles.reserve(storage_expert_ids.size());
+    for (const auto expert_id : storage_expert_ids) {
+      const std::vector<std::int32_t> one_expert{expert_id};
+      const auto gate_up_raw =
+          ReadSelectedExpertRaw(model, gate_up_tensor, one_expert,
+                                kGateUpRowsPerExpert, gate_up_row_nbytes,
+                                "fused gate-up expert");
+      const auto gate_up_packed =
+          iq36::PackQ4Kx8(gate_up_raw, kGateUpRowsPerExpert,
+                          gate_up_blocks_per_row);
+      gate_up_handles.push_back(
+          deferred_uploads
+              ? runner.UploadPackedQ4X8Deferred(
+                    gate_up_packed, kGateUpRowsPerExpert, gate_up_blocks_per_row)
+              : runner.UploadPackedQ4X8(
+                    gate_up_packed, kGateUpRowsPerExpert, gate_up_blocks_per_row));
+      const auto down_raw =
+          ReadSelectedExpertRaw(model, down_tensor, one_expert, kHiddenSize,
+                                down_row_nbytes, "fused down expert");
+      if (q6_rowstripe_experts) {
+        down_handles.push_back(
+            deferred_uploads
+                ? runner.UploadSelectedRawQ6KRowstripeDeferred(
+                      down_raw, kHiddenSize, down_blocks_per_row, 1, 16)
+                : runner.UploadSelectedRawQ6KRowstripe(
+                      down_raw, kHiddenSize, down_blocks_per_row, 1, 16));
+      } else {
+        down_handles.push_back(
+            deferred_uploads
+                ? runner.UploadRawQ6KDeferred(
+                      down_raw, kHiddenSize, down_blocks_per_row)
+                : runner.UploadRawQ6K(down_raw, kHiddenSize, down_blocks_per_row));
+      }
+    }
+    if (concat_from_experts) {
+      gate_up_handle = runner.ConcatResidentPackedQ4X8(gate_up_handles);
+      down_handle = runner.ConcatResidentRawQ6K(down_handles);
+    }
+  } else {
+    const auto gate_up_raw =
+        ReadSelectedExpertRaw(model, gate_up_tensor, storage_expert_ids,
+                              kGateUpRowsPerExpert, gate_up_row_nbytes,
+                              "fused gate-up");
+    const auto down_raw =
+        ReadSelectedExpertRaw(model, down_tensor, storage_expert_ids, kHiddenSize,
+                              down_row_nbytes, "fused down");
+    const auto gate_up_packed =
+        iq36::PackQ4Kx8(gate_up_raw, kGateUpRowsPerExpert * kExpertUsedCount,
+                        gate_up_blocks_per_row);
+    gate_up_handle =
+        runner.UploadPackedQ4X8(gate_up_packed,
+                                kGateUpRowsPerExpert * kExpertUsedCount,
+                                gate_up_blocks_per_row);
+    down_handle =
+        runner.UploadRawQ6K(down_raw, kHiddenSize * kExpertUsedCount,
+                            down_blocks_per_row);
+  }
+  std::vector<std::uint32_t> identity_source;
+  identity_source.reserve(kExpertUsedCount);
+  for (std::uint32_t i = 0; i < kExpertUsedCount; ++i) {
+    identity_source.push_back(i);
+  }
+  const auto fused =
+      direct_expert8
+          ? runner.RunResidentPackedQ4X8Expert8ThenSwiGluThenRawQ6KExpert8(
+                gate_up_handles, down_handles, q8_attn.qs, q8_attn.bsums,
+                q8_attn.d, kIntermediateSize, kHiddenSize, repeat,
+                iq36::GpuQ4X8KernelVariant::kRowlaneParallel)
+          : runner.RunResidentPackedQ4X8ThenSwiGluThenRawQ6KSelected(
+                gate_up_handle, down_handle, q8_attn.qs, q8_attn.bsums,
+                q8_attn.d, kIntermediateSize, identity_source, kHiddenSize,
+                repeat, iq36::GpuQ4X8KernelVariant::kRowlaneParallel);
+
+  Layer7FusedSelectedQ6Run run;
+  run.down = sorted_storage
+                 ? ReorderLayer7SelectedChunks(
+                       fused.down, storage_expert_ids, expert_ids, kHiddenSize)
+                 : fused.down;
+  run.timing = fused.timing;
+  run.platform_name = runner.platform_name();
+  run.device_name = runner.device_name();
+  run.build_log = runner.build_log();
+  run.program_build_ms = runner.program_build_ms();
+  return run;
+}
+'''
+
+
+def replace_once(text: str, old: str, new: str) -> str:
+  count = text.count(old)
+  if count != 1:
+    raise SystemExit(f"expected exactly one source replacement for {old[:80]!r}, found {count}")
+  return text.replace(old, new, 1)
+
+
+def patch_selected_down_q6(cpp: str) -> str:
+  cpp = replace_once(
+      cpp,
+      '  Require(down_tensor.type == 12, "selected down tensor must be Q4_K for this gate");',
+      '  Require(down_tensor.type == 12 || down_tensor.type == 14,\n'
+      '          "selected down tensor must be Q4_K or Q6_K");',
+  )
+  cpp = replace_once(
+      cpp,
+      '''  Require(down_row_nbytes == down_blocks_per_row * kQ4KBlockBytes,
+          "selected down Q4 row byte mismatch");
+''',
+      '''  const std::uint64_t down_block_nbytes =
+      down_tensor.type == 12 ? kQ4KBlockBytes : kQ6KBlockBytes;
+  Require(down_row_nbytes == down_blocks_per_row * down_block_nbytes,
+          "selected down row byte mismatch");
+''',
+  )
+  cpp = replace_once(
+      cpp,
+      '''  run.down.assign(kWeightedValueCount, 0.0f);
+  for (std::uint64_t selected = 0; selected < kExpertUsedCount; ++selected) {
+    const auto raw_offset =
+        static_cast<std::size_t>(selected * kHiddenSize * down_blocks_per_row * kQ4KBlockBytes);
+    const auto raw_count =
+        static_cast<std::size_t>(kHiddenSize * down_blocks_per_row * kQ4KBlockBytes);
+    const auto expert_raw = SliceBytes(down_raw, raw_offset, raw_count);
+    const auto expert_packed =
+        iq36::PackQ4Kx8(expert_raw, kHiddenSize, down_blocks_per_row);
+    const auto input_offset = static_cast<std::size_t>(selected * kIntermediateSize);
+    const auto expert_input = SliceFloats(run.swiglu, input_offset, kIntermediateSize);
+    const auto bridge_begin = std::chrono::steady_clock::now();
+    const auto q8_down = iq36::QuantizeQ8KInputPlanes(expert_input);
+    const auto bridge_end = std::chrono::steady_clock::now();
+    run.timing.host_q8_bridge_us +=
+        std::chrono::duration<double, std::micro>(bridge_end - bridge_begin).count();
+    run.timing.host_q8_bridge_count += 1;
+    const auto expert_down =
+        runner.Run(expert_packed, q8_down.qs, q8_down.bsums, q8_down.d,
+                   kHiddenSize, down_blocks_per_row, repeat,
+                   iq36::GpuQ4X8KernelVariant::kRowlaneParallel);
+    std::copy(expert_down.output.begin(), expert_down.output.end(),
+              run.down.begin() + static_cast<std::ptrdiff_t>(selected * kHiddenSize));
+    run.timing.down_min_us += expert_down.timing.min_us;
+    run.timing.down_mean_us += expert_down.timing.mean_us;
+    run.timing.down_global_work_items += expert_down.timing.global_work_items;
+    run.timing.down_kernel_launches += 1;
+  }
+''',
+      '''  run.down.assign(kWeightedValueCount, 0.0f);
+  if (down_tensor.type == 12) {
+    for (std::uint64_t selected = 0; selected < kExpertUsedCount; ++selected) {
+      const auto raw_offset =
+          static_cast<std::size_t>(selected * kHiddenSize * down_blocks_per_row * kQ4KBlockBytes);
+      const auto raw_count =
+          static_cast<std::size_t>(kHiddenSize * down_blocks_per_row * kQ4KBlockBytes);
+      const auto expert_raw = SliceBytes(down_raw, raw_offset, raw_count);
+      const auto expert_packed =
+          iq36::PackQ4Kx8(expert_raw, kHiddenSize, down_blocks_per_row);
+      const auto input_offset = static_cast<std::size_t>(selected * kIntermediateSize);
+      const auto expert_input = SliceFloats(run.swiglu, input_offset, kIntermediateSize);
+      const auto bridge_begin = std::chrono::steady_clock::now();
+      const auto q8_down = iq36::QuantizeQ8KInputPlanes(expert_input);
+      const auto bridge_end = std::chrono::steady_clock::now();
+      run.timing.host_q8_bridge_us +=
+          std::chrono::duration<double, std::micro>(bridge_end - bridge_begin).count();
+      run.timing.host_q8_bridge_count += 1;
+      const auto expert_down =
+          runner.Run(expert_packed, q8_down.qs, q8_down.bsums, q8_down.d,
+                     kHiddenSize, down_blocks_per_row, repeat,
+                     iq36::GpuQ4X8KernelVariant::kRowlaneParallel);
+      std::copy(expert_down.output.begin(), expert_down.output.end(),
+                run.down.begin() + static_cast<std::ptrdiff_t>(selected * kHiddenSize));
+      run.timing.down_min_us += expert_down.timing.min_us;
+      run.timing.down_mean_us += expert_down.timing.mean_us;
+      run.timing.down_global_work_items += expert_down.timing.global_work_items;
+      run.timing.down_kernel_launches += 1;
+    }
+  } else {
+    const auto bridge_begin = std::chrono::steady_clock::now();
+    const auto q8_down =
+        QuantizePerExpertQ8KLayer7Q6(run.swiglu, kExpertUsedCount, kIntermediateSize);
+    const auto bridge_end = std::chrono::steady_clock::now();
+    run.timing.host_q8_bridge_us +=
+        std::chrono::duration<double, std::micro>(bridge_end - bridge_begin).count();
+    run.timing.host_q8_bridge_count += 1;
+    run.down = RunGpuSelectedDownQ6Layer7(
+        down_raw, q8_down, kHiddenSize, down_blocks_per_row, kExpertUsedCount,
+        device_substring, repeat, &run.timing, &run.platform_name,
+        &run.device_name, &run.build_log, &run.program_build_ms);
+  }
+''',
+  )
+  return cpp
+
+
+def ffn_q6_probe_cpp(opencl_source: str) -> str:
+  cpp = V_Q6.v_q6_probe_cpp(opencl_source)
+  cpp = patch_selected_down_q6(cpp)
+  selected_shell_index = cpp.index("\nSelectedFfnRun RunGpuSelectedFfnShell(")
+  cpp = cpp[:selected_shell_index] + "\n" + SELECTED_Q6_EXTRA_CPP + cpp[selected_shell_index:]
+  cpp = replace_once(
+      cpp,
+      "constexpr int kQ6KBlockBytes = 210;\n\nstruct SharedFfnTiming",
+      "struct SharedFfnTiming",
+  )
+  replacements = {
+      "layer7 V Q6 handoff probe expects --layer 5": "layer7 FFN Q6 down handoff probe expects --layer 5",
+      V_Q6.SCHEMA_VERSION: SCHEMA_VERSION,
+      "two_linear_layer_to_full_attention_v_q6_core_output_load_once_run_many":
+          "two_linear_layer_to_full_attention_v_q6_ffn_q6_down_load_once_run_many",
+      '    std::cout << "\\"full_attn_ffn_boundary\\":\\"q6_down_reference_pending\\",";':
+          '    std::cout << "\\"full_attn_ffn_boundary\\":\\"gpu_q6_down_captured_post_norm\\",";',
+  }
+  for old, new in replacements.items():
+    cpp = replace_once(cpp, old, new)
+  cpp = replace_once(
+      cpp,
+      '''    const auto oracle_attn_post_norm =
+        iq36::read_f32_vector_file(JoinPath(args.payload_dir, "full_attn_post_norm.bin"));
+''',
+      '''    const auto oracle_attn_post_norm =
+        iq36::read_f32_vector_file(JoinPath(args.payload_dir, "full_attn_post_norm.bin"));
+    const auto oracle_expert_ids =
+        ReadI32VectorFile(JoinPath(args.payload_dir, "l7_ffn_moe_topk.bin"));
+    const auto oracle_weights_norm =
+        iq36::read_f32_vector_file(JoinPath(args.payload_dir, "l7_ffn_moe_weights_norm.bin"));
+    const auto oracle_selected_gate_up =
+        iq36::read_f32_vector_file(JoinPath(args.payload_dir, "l7_ffn_moe_gate_up.bin"));
+    const auto oracle_selected_swiglu =
+        iq36::read_f32_vector_file(JoinPath(args.payload_dir, "l7_ffn_moe_swiglu.bin"));
+    const auto oracle_selected_down =
+        iq36::read_f32_vector_file(JoinPath(args.payload_dir, "l7_ffn_moe_down.bin"));
+    const auto oracle_weighted =
+        iq36::read_f32_vector_file(JoinPath(args.payload_dir, "l7_ffn_moe_weighted.bin"));
+    const auto oracle_moe_out =
+        iq36::read_f32_vector_file(JoinPath(args.payload_dir, "l7_ffn_moe_out.bin"));
+    const auto oracle_shared_down =
+        iq36::read_f32_vector_file(JoinPath(args.payload_dir, "l7_ffn_shexp.bin"));
+    const auto oracle_shared_gate =
+        iq36::read_f32_vector_file(JoinPath(args.payload_dir, "l7_shared_expert_gate.bin"));
+    const auto oracle_shared_sigmoid =
+        iq36::read_f32_vector_file(JoinPath(args.payload_dir, "l7_shared_expert_gate_sigmoid.bin"));
+    const auto oracle_shared_gated =
+        iq36::read_f32_vector_file(JoinPath(args.payload_dir, "l7_ffn_shexp_gated.bin"));
+    const auto oracle_ffn_out =
+        iq36::read_f32_vector_file(JoinPath(args.payload_dir, "l7_ffn_out.bin"));
+    const auto oracle_layer_output =
+        iq36::add_vectors(oracle_attn_residual, oracle_ffn_out);
+''',
+  )
+  cpp = replace_once(
+      cpp,
+      '''        FullAttentionPayloadCountsOk(layer2_oracle) &&
+        oracle_attn_residual.size() == kHiddenSize &&
+        oracle_attn_post_norm.size() == kHiddenSize;
+''',
+      '''        FullAttentionPayloadCountsOk(layer2_oracle) &&
+        oracle_attn_residual.size() == kHiddenSize &&
+        oracle_attn_post_norm.size() == kHiddenSize &&
+        oracle_expert_ids.size() == kExpertUsedCount &&
+        oracle_weights_norm.size() == kExpertUsedCount &&
+        oracle_selected_gate_up.size() == kGateUpValueCount &&
+        oracle_selected_swiglu.size() == kSwiGluValueCount &&
+        oracle_selected_down.size() == kWeightedValueCount &&
+        oracle_weighted.size() == kWeightedValueCount &&
+        oracle_moe_out.size() == kHiddenSize &&
+        oracle_shared_down.size() == kHiddenSize &&
+        oracle_shared_gate.size() == 1 &&
+        oracle_shared_sigmoid.size() == 1 &&
+        oracle_shared_gated.size() == kHiddenSize &&
+        oracle_ffn_out.size() == kHiddenSize &&
+        oracle_layer_output.size() == kHiddenSize;
+''',
+  )
+  cpp = replace_once(
+      cpp,
+      '''    const auto ffn_norm_weight =
+        iq36::decode_tensor_row(args.model_path, index,
+                                LayerTensorName(layer2, "post_attention_norm.weight"), 0);
+''',
+      '''    const auto ffn_norm_weight =
+        iq36::decode_tensor_row(args.model_path, index,
+                                LayerTensorName(layer2, "post_attention_norm.weight"), 0);
+    const std::string selected_gate_up_tensor_name =
+        LayerTensorName(layer2, "ffn_gate_up_exps.weight");
+    const std::string selected_down_tensor_name =
+        LayerTensorName(layer2, "ffn_down_exps.weight");
+    const std::string shared_gate_tensor_name =
+        LayerTensorName(layer2, "ffn_gate_shexp.weight");
+    const std::string shared_up_tensor_name =
+        LayerTensorName(layer2, "ffn_up_shexp.weight");
+    const std::string shared_down_tensor_name =
+        LayerTensorName(layer2, "ffn_down_shexp.weight");
+    const std::string shared_input_gate_tensor_name =
+        LayerTensorName(layer2, "ffn_gate_inp_shexp.weight");
+    const auto* selected_gate_up_tensor =
+        iq36::find_tensor(index, selected_gate_up_tensor_name);
+    const auto* selected_down_tensor =
+        iq36::find_tensor(index, selected_down_tensor_name);
+    const auto* shared_gate_tensor =
+        iq36::find_tensor(index, shared_gate_tensor_name);
+    const auto* shared_up_tensor =
+        iq36::find_tensor(index, shared_up_tensor_name);
+    const auto* shared_down_tensor =
+        iq36::find_tensor(index, shared_down_tensor_name);
+    const auto* shared_input_gate_tensor =
+        iq36::find_tensor(index, shared_input_gate_tensor_name);
+    Require(selected_gate_up_tensor != nullptr, "layer7 selected gate-up tensor missing");
+    Require(selected_down_tensor != nullptr, "layer7 selected down tensor missing");
+    Require(shared_gate_tensor != nullptr, "layer7 shared gate tensor missing");
+    Require(shared_up_tensor != nullptr, "layer7 shared up tensor missing");
+    Require(shared_down_tensor != nullptr, "layer7 shared down tensor missing");
+    Require(shared_input_gate_tensor != nullptr, "layer7 shared input gate tensor missing");
+    const auto shared_input_gate_weights =
+        ReadF32TensorPayload(model, *shared_input_gate_tensor,
+                             static_cast<std::size_t>(kHiddenSize));
+    const bool layer2_ffn_tensor_shapes_ok =
+        selected_gate_up_tensor->type == 12 &&
+        selected_down_tensor->type == 14 &&
+        shared_gate_tensor->type == 12 &&
+        shared_up_tensor->type == 12 &&
+        shared_down_tensor->type == 14 &&
+        shared_input_gate_tensor->type == 0 &&
+        selected_gate_up_tensor->dims ==
+            std::vector<std::uint64_t>{kHiddenSize, kGateUpRowsPerExpert, kExpertCount} &&
+        selected_down_tensor->dims ==
+            std::vector<std::uint64_t>{kIntermediateSize, kHiddenSize, kExpertCount} &&
+        shared_gate_tensor->dims ==
+            std::vector<std::uint64_t>{kHiddenSize, kIntermediateSize} &&
+        shared_up_tensor->dims ==
+            std::vector<std::uint64_t>{kHiddenSize, kIntermediateSize} &&
+        shared_down_tensor->dims ==
+            std::vector<std::uint64_t>{kIntermediateSize, kHiddenSize} &&
+        shared_input_gate_tensor->dims == std::vector<std::uint64_t>{kHiddenSize};
+''',
+  )
+  cpp = replace_once(
+      cpp,
+      '''    const auto attention_gpu = RunGpuAttentionFront(
+        args.model_path,
+        *iq36::find_tensor(index, LayerTensorName(layer2, "attn_output.weight")),
+        core_gate_gpu.attn_gated,
+        layer1_run.gpu_layer_output,
+        ffn_norm_weight,
+        rms_norm_epsilon,
+        args.device_substring,
+        args.repeat);
+''',
+      '''    const auto attention_gpu = RunGpuAttentionFront(
+        args.model_path,
+        *iq36::find_tensor(index, LayerTensorName(layer2, "attn_output.weight")),
+        core_gate_gpu.attn_gated,
+        layer1_run.gpu_layer_output,
+        ffn_norm_weight,
+        rms_norm_epsilon,
+        args.device_substring,
+        args.repeat);
+
+    const auto& ffn_input = oracle_attn_post_norm;
+    const auto native_selected_gate_up =
+        iq36::matvec_expert_tensor(args.model_path, index,
+                                   selected_gate_up_tensor_name,
+                                   ffn_input, oracle_expert_ids);
+    const auto native_selected_swiglu =
+        iq36::apply_swiglu_from_gate_up(native_selected_gate_up,
+                                        kIntermediateSize, kExpertUsedCount);
+    const auto native_selected_down =
+        iq36::matvec_expert_tensor_per_expert_input(
+            args.model_path, index, selected_down_tensor_name,
+            native_selected_swiglu, oracle_expert_ids);
+    const auto native_weighted =
+        iq36::apply_expert_weights(native_selected_down, oracle_weights_norm, kHiddenSize);
+    const auto native_moe_out =
+        iq36::aggregate_experts(native_weighted, kExpertUsedCount, kHiddenSize);
+    const auto native_shared_gate =
+        iq36::matvec_tensor(args.model_path, index, shared_gate_tensor_name, ffn_input);
+    const auto native_shared_up =
+        iq36::matvec_tensor(args.model_path, index, shared_up_tensor_name, ffn_input);
+    std::vector<float> native_shared_gate_up;
+    native_shared_gate_up.reserve(native_shared_gate.size() + native_shared_up.size());
+    native_shared_gate_up.insert(native_shared_gate_up.end(),
+                                 native_shared_gate.begin(), native_shared_gate.end());
+    native_shared_gate_up.insert(native_shared_gate_up.end(),
+                                 native_shared_up.begin(), native_shared_up.end());
+    const auto native_shared_swiglu =
+        iq36::apply_swiglu_from_gate_up(native_shared_gate_up, kIntermediateSize, 1);
+    const auto native_shared_down =
+        iq36::matvec_tensor(args.model_path, index, shared_down_tensor_name,
+                            native_shared_swiglu);
+    const auto native_shared_input_gate =
+        iq36::matvec_tensor(args.model_path, index,
+                            shared_input_gate_tensor_name, ffn_input);
+    Require(native_shared_input_gate.size() == 1,
+            "native layer7 shared input gate size mismatch");
+    const std::vector<float> native_shared_sigmoid{
+        iq36::sigmoid_scalar(native_shared_input_gate[0])};
+    const auto native_shared_gated =
+        iq36::multiply_by_scalar(native_shared_down, native_shared_sigmoid[0]);
+    const auto native_ffn_out =
+        iq36::add_vectors(native_moe_out, native_shared_gated);
+    const auto native_layer_output =
+        iq36::add_vectors(oracle_attn_residual, native_ffn_out);
+
+    const auto selected_gpu = RunGpuSelectedFfnShell(
+        args.model_path, *selected_gate_up_tensor, *selected_down_tensor,
+        ffn_input, oracle_expert_ids, args.device_substring, args.repeat);
+    const auto selected_q8_host =
+        QuantizePerExpertQ8KLayer7Q6(selected_gpu.swiglu,
+                                     kExpertUsedCount, kIntermediateSize);
+    const auto selected_q8_device =
+        RunDeviceQ8QuantizeLayer7Q6(selected_gpu.swiglu,
+                                    kExpertUsedCount, kIntermediateSize,
+                                    args.device_substring, args.repeat);
+    const auto selected_q8_compare =
+        CompareLayer7SelectedQ8(selected_q8_host, selected_q8_device.q8);
+    const auto shared_gpu = RunGpuSharedFfnShell(
+        args.model_path, *shared_gate_tensor, *shared_up_tensor,
+        *shared_down_tensor, ffn_input, args.device_substring, args.repeat);
+    const auto tail_gpu = RunGpuShell(shared_input_gate_weights, ffn_input,
+                                      selected_gpu.down, oracle_weights_norm,
+                                      shared_gpu.down, oracle_attn_residual,
+                                      args.device_substring, args.repeat);
+''',
+  )
+  cpp = replace_once(
+      cpp,
+      '''    AppendCpuGpuOracleCompare(strict_groups, "l2_v",
+                              native_qkv.v,
+                              layer2_v_gpu.v,
+                              layer2_oracle.v);
+''',
+      '''    AppendCpuGpuOracleCompare(strict_groups, "l2_v",
+                              native_qkv.v,
+                              layer2_v_gpu.v,
+                              layer2_oracle.v);
+    AppendCpuGpuOracleCompare(strict_groups, "l2_selected_gate_up",
+                              native_selected_gate_up,
+                              selected_gpu.gate_up,
+                              oracle_selected_gate_up);
+    AppendCpuGpuOracleCompare(strict_groups, "l2_selected_swiglu",
+                              native_selected_swiglu,
+                              selected_gpu.swiglu,
+                              oracle_selected_swiglu);
+    AppendCpuGpuOracleCompare(strict_groups, "l2_selected_down",
+                              native_selected_down,
+                              selected_gpu.down,
+                              oracle_selected_down);
+    AppendCpuGpuOracleCompare(strict_groups, "l2_ffn_moe_weighted",
+                              native_weighted,
+                              tail_gpu.weighted,
+                              oracle_weighted);
+    AppendCpuGpuOracleCompare(strict_groups, "l2_ffn_moe_out",
+                              native_moe_out,
+                              tail_gpu.moe_out,
+                              oracle_moe_out);
+    AppendCpuGpuOracleCompare(strict_groups, "l2_shared_down",
+                              native_shared_down,
+                              shared_gpu.down,
+                              oracle_shared_down);
+    AppendCpuGpuOracleCompare(strict_groups, "l2_shared_gate",
+                              native_shared_input_gate,
+                              tail_gpu.shared_gate,
+                              oracle_shared_gate);
+    AppendCpuGpuOracleCompare(strict_groups, "l2_shared_gate_sigmoid",
+                              native_shared_sigmoid,
+                              tail_gpu.shared_gate_sigmoid,
+                              oracle_shared_sigmoid);
+    AppendCpuGpuOracleCompare(strict_groups, "l2_ffn_shexp_gated",
+                              native_shared_gated,
+                              tail_gpu.shared_gated,
+                              oracle_shared_gated);
+    AppendCpuGpuOracleCompare(strict_groups, "l2_ffn_out",
+                              native_ffn_out,
+                              tail_gpu.ffn_out,
+                              oracle_ffn_out);
+    AppendCpuGpuOracleCompare(strict_groups, "l2_layer_output_derived",
+                              native_layer_output,
+                              tail_gpu.layer_output,
+                              oracle_layer_output);
+''',
+  )
+  cpp = replace_once(
+      cpp,
+      '''        attention_gpu.timing.output_projection_min_us > 0.0 &&
+        attention_gpu.timing.residual_add_min_us > 0.0 &&
+        attention_gpu.timing.ffn_rmsnorm_min_us > 0.0;
+''',
+      '''        attention_gpu.timing.output_projection_min_us > 0.0 &&
+        attention_gpu.timing.residual_add_min_us > 0.0 &&
+        attention_gpu.timing.ffn_rmsnorm_min_us > 0.0 &&
+        selected_gpu.timing.gate_up_min_us > 0.0 &&
+        selected_gpu.timing.swiglu_min_us > 0.0 &&
+        selected_gpu.timing.down_min_us > 0.0 &&
+        selected_q8_device.q8_quantize_min_us > 0.0 &&
+        shared_gpu.timing.gate_min_us > 0.0 &&
+        shared_gpu.timing.up_min_us > 0.0 &&
+        shared_gpu.timing.swiglu_min_us > 0.0 &&
+        shared_gpu.timing.down_min_us > 0.0 &&
+        tail_gpu.timing.shell_sum_min_us > 0.0;
+''',
+  )
+  cpp = replace_once(
+      cpp,
+      '''        attention_gpu.device_name.find(args.device_substring) != std::string::npos;
+''',
+      '''        attention_gpu.device_name.find(args.device_substring) != std::string::npos &&
+        selected_gpu.device_name.find(args.device_substring) != std::string::npos &&
+        selected_q8_device.device_name.find(args.device_substring) != std::string::npos &&
+        shared_gpu.device_name.find(args.device_substring) != std::string::npos &&
+        tail_gpu.device_name.find(args.device_substring) != std::string::npos;
+''',
+  )
+  cpp = replace_once(
+      cpp,
+      '''        ffn_q6_boundary &&
+        args.repeat > 0;
+''',
+      '''        ffn_q6_boundary &&
+        layer2_ffn_tensor_shapes_ok &&
+        selected_q8_compare.passed &&
+        args.repeat > 0;
+''',
+  )
+  cpp = replace_once(
+      cpp,
+      '''    const double two_layer_kernel_sum_min =
+        layer0_run.timing.layer_kernel_sum_min_us +
+        layer1_run.timing.layer_kernel_sum_min_us;
+''',
+      '''    const double two_layer_kernel_sum_min =
+        layer0_run.timing.layer_kernel_sum_min_us +
+        layer1_run.timing.layer_kernel_sum_min_us;
+    const double layer2_ffn_sum_min =
+        selected_gpu.timing.selected_ffn_kernel_sum_min_us +
+        shared_gpu.timing.shared_ffn_kernel_sum_min_us +
+        tail_gpu.timing.shell_sum_min_us;
+''',
+  )
+  cpp = replace_once(
+      cpp,
+      '''    std::cout << "\\"full_attn_ffn_boundary\\":\\"gpu_q6_down_captured_post_norm\\",";''',
+      '''    std::cout << "\\"full_attn_ffn_boundary\\":\\"gpu_q6_down_captured_post_norm\\",";
+    std::cout << "\\"ffn_input_boundary\\":\\"captured_post_attention_norm\\",";''',
+  )
+  cpp = replace_once(
+      cpp,
+      '''    std::cout << "\\"layer7_v_tensor_type\\":\\""
+              << JsonEscape(iq36::ggml_type_name(layer2_tensors.v_tensor->type)) << "\\",";''',
+      '''    std::cout << "\\"layer7_v_tensor_type\\":\\""
+              << JsonEscape(iq36::ggml_type_name(layer2_tensors.v_tensor->type)) << "\\",";
+    std::cout << "\\"selected_q8_device_name\\":\\""
+              << JsonEscape(selected_q8_device.device_name) << "\\",";
+    std::cout << "\\"layer7_selected_down_tensor_type\\":\\""
+              << JsonEscape(iq36::ggml_type_name(selected_down_tensor->type)) << "\\",";
+    std::cout << "\\"layer7_shared_down_tensor_type\\":\\""
+              << JsonEscape(iq36::ggml_type_name(shared_down_tensor->type)) << "\\",";''',
+  )
+  cpp = replace_once(
+      cpp,
+      '''                  layer2_v_gpu.program_build_ms +
+                  core_gate_gpu.program_build_ms + attention_gpu.program_build_ms)
+''',
+      '''                  layer2_v_gpu.program_build_ms +
+                  core_gate_gpu.program_build_ms + attention_gpu.program_build_ms +
+                  selected_gpu.program_build_ms +
+                  selected_q8_device.program_build_ms +
+                  shared_gpu.program_build_ms +
+                  tail_gpu.program_build_ms)
+''',
+  )
+  cpp = replace_once(
+      cpp,
+      '''                            layer2_v_gpu.build_log +
+                            core_gate_gpu.build_log + attention_gpu.build_log)
+''',
+      '''                            layer2_v_gpu.build_log +
+                            core_gate_gpu.build_log + attention_gpu.build_log +
+                            selected_gpu.build_log +
+                            selected_q8_device.build_log +
+                            shared_gpu.build_log +
+                            tail_gpu.build_log)
+''',
+  )
+  cpp = replace_once(
+      cpp,
+      '''    std::cout << "\\"resident_two_linear_plus_layer7_attention_kernel_sum_min_us\\":"
+              << (two_layer_kernel_sum_min + layer2_attention_sum_min);
+''',
+      '''    std::cout << "\\"resident_two_linear_plus_layer7_attention_kernel_sum_min_us\\":"
+              << (two_layer_kernel_sum_min + layer2_attention_sum_min) << ",";
+    std::cout << "\\"resident_layer7_ffn_q6_down_kernel_sum_min_us\\":"
+              << layer2_ffn_sum_min << ",";
+    std::cout << "\\"selected_q8_device_quantize_min_us\\":"
+              << selected_q8_device.q8_quantize_min_us << ",";
+    std::cout << "\\"selected_q8_device_quantize_mean_us\\":"
+              << selected_q8_device.q8_quantize_mean_us << ",";
+    std::cout << "\\"selected_q8_device_quantize_global_work_items\\":"
+              << selected_q8_device.q8_quantize_global_work_items << ",";
+    std::cout << "\\"resident_two_linear_plus_layer7_attention_ffn_kernel_sum_min_us\\":"
+              << (two_layer_kernel_sum_min + layer2_attention_sum_min + layer2_ffn_sum_min);
+''',
+  )
+  cpp = replace_once(
+      cpp,
+      r'''    std::cout << ",\"l2_k_raw\":{\"gpu_vs_cpu\":";
+    WriteCompare(k_raw_gpu_vs_cpu);
+    std::cout << "}";
+''',
+      r'''    std::cout << ",\"l2_k_raw\":{\"gpu_vs_cpu\":";
+    WriteCompare(k_raw_gpu_vs_cpu);
+    std::cout << "},\"l2_selected_q8_device_vs_host\":";
+    WriteLayer7Q8Compare(selected_q8_compare);
+''',
+  )
+  cpp = replace_once(
+      cpp,
+      '''    std::cout << "\\"layer2_ffn_q6_boundary\\":"
+              << (ffn_q6_boundary ? "true" : "false") << ",";''',
+      '''    std::cout << "\\"layer2_ffn_q6_boundary\\":"
+              << (ffn_q6_boundary ? "true" : "false") << ",";
+    std::cout << "\\"layer2_ffn_tensor_shapes_ok\\":"
+              << (layer2_ffn_tensor_shapes_ok ? "true" : "false") << ",";
+    std::cout << "\\"selected_q8_device_matches_host\\":"
+              << (selected_q8_compare.passed ? "true" : "false") << ",";
+    std::cout << "\\"selected_q8_host_device_size_ok\\":"
+              << (selected_q8_compare.size_ok ? "true" : "false") << ",";
+    std::cout << "\\"selected_q8_device_qs_mismatch_count\\":"
+              << selected_q8_compare.qs_mismatch_count << ",";
+    std::cout << "\\"selected_q8_device_max_abs_d_diff\\":"
+              << selected_q8_compare.max_abs_d_diff << ",";''',
+  )
+  cpp = replace_once(
+      cpp,
+      '''    const auto selected_q8_compare =
+        CompareLayer7SelectedQ8(selected_q8_host, selected_q8_device.q8);
+    const auto shared_gpu = RunGpuSharedFfnShell(
+''',
+      '''    const auto selected_q8_compare =
+        CompareLayer7SelectedQ8(selected_q8_host, selected_q8_device.q8);
+    std::ifstream selected_down_rowstripe_model(args.model_path, std::ios::binary);
+    Require(static_cast<bool>(selected_down_rowstripe_model),
+            "failed to open model for rowstripe selected down");
+    const std::uint64_t selected_down_blocks_per_row = kIntermediateSize / 256;
+    const std::uint64_t selected_down_row_nbytes =
+        iq36::ggml_tensor_nbytes(selected_down_tensor->type,
+                                 std::vector<std::uint64_t>{kIntermediateSize});
+    const auto selected_down_raw_for_rowstripe =
+        ReadSelectedExpertRaw(selected_down_rowstripe_model, *selected_down_tensor,
+                              oracle_expert_ids, kHiddenSize,
+                              selected_down_row_nbytes, "rowstripe selected down");
+    const auto rowstripe_selected_q6_gpu = RunGpuSelectedDownQ6RowstripeLayer7(
+        selected_down_raw_for_rowstripe, selected_q8_device.q8, kHiddenSize,
+        selected_down_blocks_per_row, kExpertUsedCount, 16,
+        args.device_substring, args.repeat);
+    const auto fused_selected_q6_gpu = RunLayer7ResidentFusedSelectedQ6(
+        args.model_path, *selected_gate_up_tensor, *selected_down_tensor,
+        ffn_input, oracle_expert_ids, false, false, false, false,
+        false, args.device_substring, args.repeat);
+    const auto fused_selected_q6_sorted_gpu = RunLayer7ResidentFusedSelectedQ6(
+        args.model_path, *selected_gate_up_tensor, *selected_down_tensor,
+        ffn_input, oracle_expert_ids, true, false, false, false,
+        false, args.device_substring, args.repeat);
+    const auto fused_selected_q6_concat_deferred_sorted_gpu =
+        RunLayer7ResidentFusedSelectedQ6(
+            args.model_path, *selected_gate_up_tensor, *selected_down_tensor,
+            ffn_input, oracle_expert_ids, true, true, true, false,
+            false, args.device_substring, args.repeat);
+    const auto fused_selected_q6_expert8_gpu =
+        RunLayer7ResidentFusedSelectedQ6(
+            args.model_path, *selected_gate_up_tensor, *selected_down_tensor,
+            ffn_input, oracle_expert_ids, false, false, false, true,
+            false, args.device_substring, args.repeat);
+    const auto fused_selected_q6_expert8_rowstripe_gpu =
+        RunLayer7ResidentFusedSelectedQ6(
+            args.model_path, *selected_gate_up_tensor, *selected_down_tensor,
+            ffn_input, oracle_expert_ids, false, false, false, true,
+            true,
+            args.device_substring, args.repeat);
+    const auto shared_gpu = RunGpuSharedFfnShell(
+''',
+  )
+  cpp = replace_once(
+      cpp,
+      '''    AppendCpuGpuOracleCompare(strict_groups, "l2_selected_down",
+                              native_selected_down,
+                              selected_gpu.down,
+                              oracle_selected_down);
+''',
+      '''    AppendCpuGpuOracleCompare(strict_groups, "l2_selected_down",
+                              native_selected_down,
+                              selected_gpu.down,
+                              oracle_selected_down);
+    AppendCpuGpuOracleCompare(strict_groups, "l2_rowstripe_selected_q6_down",
+                              native_selected_down,
+                              rowstripe_selected_q6_gpu.output,
+                              oracle_selected_down);
+    AppendCpuGpuOracleCompare(strict_groups, "l2_fused_selected_q6_down",
+                              native_selected_down,
+                              fused_selected_q6_gpu.down,
+                              oracle_selected_down);
+    AppendCpuGpuOracleCompare(strict_groups, "l2_fused_selected_q6_down_sorted_reorder",
+                              native_selected_down,
+                              fused_selected_q6_sorted_gpu.down,
+                              oracle_selected_down);
+    AppendCpuGpuOracleCompare(strict_groups, "l2_fused_selected_q6_down_concat_deferred_sorted_reorder",
+                              native_selected_down,
+                              fused_selected_q6_concat_deferred_sorted_gpu.down,
+                              oracle_selected_down);
+    AppendCpuGpuOracleCompare(strict_groups, "l2_fused_selected_q6_down_expert8",
+                              native_selected_down,
+                              fused_selected_q6_expert8_gpu.down,
+                              oracle_selected_down);
+    AppendCpuGpuOracleCompare(strict_groups, "l2_fused_selected_q6_down_expert8_rowstripe",
+                              native_selected_down,
+                              fused_selected_q6_expert8_rowstripe_gpu.down,
+                              oracle_selected_down);
+''',
+  )
+  cpp = replace_once(
+      cpp,
+      '''        selected_gpu.timing.down_min_us > 0.0 &&
+        selected_q8_device.q8_quantize_min_us > 0.0 &&
+        shared_gpu.timing.gate_min_us > 0.0 &&
+''',
+      '''        selected_gpu.timing.down_min_us > 0.0 &&
+        selected_q8_device.q8_quantize_min_us > 0.0 &&
+        rowstripe_selected_q6_gpu.timing.down_min_us > 0.0 &&
+        fused_selected_q6_gpu.timing.shell_sum_min_us > 0.0 &&
+        fused_selected_q6_sorted_gpu.timing.shell_sum_min_us > 0.0 &&
+        fused_selected_q6_concat_deferred_sorted_gpu.timing.shell_sum_min_us > 0.0 &&
+        fused_selected_q6_expert8_gpu.timing.shell_sum_min_us > 0.0 &&
+        fused_selected_q6_expert8_rowstripe_gpu.timing.shell_sum_min_us > 0.0 &&
+        shared_gpu.timing.gate_min_us > 0.0 &&
+''',
+  )
+  cpp = replace_once(
+      cpp,
+      '''        selected_gpu.device_name.find(args.device_substring) != std::string::npos &&
+        selected_q8_device.device_name.find(args.device_substring) != std::string::npos &&
+        shared_gpu.device_name.find(args.device_substring) != std::string::npos &&
+''',
+      '''        selected_gpu.device_name.find(args.device_substring) != std::string::npos &&
+        selected_q8_device.device_name.find(args.device_substring) != std::string::npos &&
+        rowstripe_selected_q6_gpu.device_name.find(args.device_substring) != std::string::npos &&
+        fused_selected_q6_gpu.device_name.find(args.device_substring) != std::string::npos &&
+        fused_selected_q6_sorted_gpu.device_name.find(args.device_substring) != std::string::npos &&
+        fused_selected_q6_concat_deferred_sorted_gpu.device_name.find(args.device_substring) != std::string::npos &&
+        fused_selected_q6_expert8_gpu.device_name.find(args.device_substring) != std::string::npos &&
+        fused_selected_q6_expert8_rowstripe_gpu.device_name.find(args.device_substring) != std::string::npos &&
+        shared_gpu.device_name.find(args.device_substring) != std::string::npos &&
+''',
+  )
+  cpp = replace_once(
+      cpp,
+      '''                  selected_gpu.program_build_ms +
+                  selected_q8_device.program_build_ms +
+                  shared_gpu.program_build_ms +
+''',
+      '''                  selected_gpu.program_build_ms +
+                  selected_q8_device.program_build_ms +
+                  rowstripe_selected_q6_gpu.program_build_ms +
+                  fused_selected_q6_gpu.program_build_ms +
+                  fused_selected_q6_sorted_gpu.program_build_ms +
+                  fused_selected_q6_concat_deferred_sorted_gpu.program_build_ms +
+                  fused_selected_q6_expert8_gpu.program_build_ms +
+                  fused_selected_q6_expert8_rowstripe_gpu.program_build_ms +
+                  shared_gpu.program_build_ms +
+''',
+  )
+  cpp = replace_once(
+      cpp,
+      '''                            selected_gpu.build_log +
+                            selected_q8_device.build_log +
+                            shared_gpu.build_log +
+''',
+      '''                            selected_gpu.build_log +
+                            selected_q8_device.build_log +
+                            rowstripe_selected_q6_gpu.build_log +
+                            fused_selected_q6_gpu.build_log +
+                            fused_selected_q6_sorted_gpu.build_log +
+                            fused_selected_q6_concat_deferred_sorted_gpu.build_log +
+                            fused_selected_q6_expert8_gpu.build_log +
+                            fused_selected_q6_expert8_rowstripe_gpu.build_log +
+                            shared_gpu.build_log +
+''',
+  )
+  cpp = replace_once(
+      cpp,
+      '''    std::cout << "\\"selected_q8_device_name\\":\\""
+              << JsonEscape(selected_q8_device.device_name) << "\\",";
+    std::cout << "\\"layer7_selected_down_tensor_type\\":\\""
+''',
+      '''    std::cout << "\\"selected_q8_device_name\\":\\""
+              << JsonEscape(selected_q8_device.device_name) << "\\",";
+    std::cout << "\\"rowstripe_selected_q6_device_name\\":\\""
+              << JsonEscape(rowstripe_selected_q6_gpu.device_name) << "\\",";
+    std::cout << "\\"fused_selected_q6_device_name\\":\\""
+              << JsonEscape(fused_selected_q6_gpu.device_name) << "\\",";
+    std::cout << "\\"fused_selected_q6_sorted_device_name\\":\\""
+              << JsonEscape(fused_selected_q6_sorted_gpu.device_name) << "\\",";
+    std::cout << "\\"fused_selected_q6_concat_deferred_sorted_device_name\\":\\""
+              << JsonEscape(fused_selected_q6_concat_deferred_sorted_gpu.device_name) << "\\",";
+    std::cout << "\\"fused_selected_q6_expert8_device_name\\":\\""
+              << JsonEscape(fused_selected_q6_expert8_gpu.device_name) << "\\",";
+    std::cout << "\\"fused_selected_q6_expert8_rowstripe_device_name\\":\\""
+              << JsonEscape(fused_selected_q6_expert8_rowstripe_gpu.device_name) << "\\",";
+    std::cout << "\\"layer7_selected_down_tensor_type\\":\\""
+''',
+  )
+  cpp = replace_once(
+      cpp,
+      '''    std::cout << "\\"selected_q8_device_quantize_global_work_items\\":"
+              << selected_q8_device.q8_quantize_global_work_items << ",";
+    std::cout << "\\"resident_two_linear_plus_layer7_attention_ffn_kernel_sum_min_us\\":"
+''',
+      '''    std::cout << "\\"selected_q8_device_quantize_global_work_items\\":"
+              << selected_q8_device.q8_quantize_global_work_items << ",";
+    std::cout << "\\"rowstripe_selected_q6_down_min_us\\":"
+              << rowstripe_selected_q6_gpu.timing.down_min_us << ",";
+    std::cout << "\\"rowstripe_selected_q6_down_mean_us\\":"
+              << rowstripe_selected_q6_gpu.timing.down_mean_us << ",";
+    std::cout << "\\"rowstripe_selected_q6_down_global_work_items\\":"
+              << rowstripe_selected_q6_gpu.timing.down_global_work_items << ",";
+    std::cout << "\\"rowstripe_selected_q6_conversion_us\\":"
+              << rowstripe_selected_q6_gpu.conversion_us << ",";
+    std::cout << "\\"rowstripe_selected_q6_rows_per_tile\\":"
+              << rowstripe_selected_q6_gpu.rows_per_tile << ",";
+    std::cout << "\\"rowstripe_selected_q6_row_tile_count\\":"
+              << rowstripe_selected_q6_gpu.row_tile_count << ",";
+    std::cout << "\\"fused_selected_q6_shell_sum_min_us\\":"
+              << fused_selected_q6_gpu.timing.shell_sum_min_us << ",";
+    std::cout << "\\"fused_selected_q6_gate_up_min_us\\":"
+              << fused_selected_q6_gpu.timing.gate_up.min_us << ",";
+    std::cout << "\\"fused_selected_q6_swiglu_min_us\\":"
+              << fused_selected_q6_gpu.timing.swiglu_min_us << ",";
+    std::cout << "\\"fused_selected_q6_q8_quantize_min_us\\":"
+              << fused_selected_q6_gpu.timing.q8_quantize_min_us << ",";
+    std::cout << "\\"fused_selected_q6_down_min_us\\":"
+              << fused_selected_q6_gpu.timing.down.min_us << ",";
+    std::cout << "\\"fused_selected_q6_sorted_shell_sum_min_us\\":"
+              << fused_selected_q6_sorted_gpu.timing.shell_sum_min_us << ",";
+    std::cout << "\\"fused_selected_q6_sorted_gate_up_min_us\\":"
+              << fused_selected_q6_sorted_gpu.timing.gate_up.min_us << ",";
+    std::cout << "\\"fused_selected_q6_sorted_swiglu_min_us\\":"
+              << fused_selected_q6_sorted_gpu.timing.swiglu_min_us << ",";
+    std::cout << "\\"fused_selected_q6_sorted_q8_quantize_min_us\\":"
+              << fused_selected_q6_sorted_gpu.timing.q8_quantize_min_us << ",";
+    std::cout << "\\"fused_selected_q6_sorted_down_min_us\\":"
+              << fused_selected_q6_sorted_gpu.timing.down.min_us << ",";
+    std::cout << "\\"fused_selected_q6_concat_deferred_sorted_shell_sum_min_us\\":"
+              << fused_selected_q6_concat_deferred_sorted_gpu.timing.shell_sum_min_us << ",";
+    std::cout << "\\"fused_selected_q6_concat_deferred_sorted_gate_up_min_us\\":"
+              << fused_selected_q6_concat_deferred_sorted_gpu.timing.gate_up.min_us << ",";
+    std::cout << "\\"fused_selected_q6_concat_deferred_sorted_swiglu_min_us\\":"
+              << fused_selected_q6_concat_deferred_sorted_gpu.timing.swiglu_min_us << ",";
+    std::cout << "\\"fused_selected_q6_concat_deferred_sorted_q8_quantize_min_us\\":"
+              << fused_selected_q6_concat_deferred_sorted_gpu.timing.q8_quantize_min_us << ",";
+    std::cout << "\\"fused_selected_q6_concat_deferred_sorted_down_min_us\\":"
+              << fused_selected_q6_concat_deferred_sorted_gpu.timing.down.min_us << ",";
+    std::cout << "\\"fused_selected_q6_expert8_shell_sum_min_us\\":"
+              << fused_selected_q6_expert8_gpu.timing.shell_sum_min_us << ",";
+    std::cout << "\\"fused_selected_q6_expert8_gate_up_min_us\\":"
+              << fused_selected_q6_expert8_gpu.timing.gate_up.min_us << ",";
+    std::cout << "\\"fused_selected_q6_expert8_swiglu_min_us\\":"
+              << fused_selected_q6_expert8_gpu.timing.swiglu_min_us << ",";
+    std::cout << "\\"fused_selected_q6_expert8_q8_quantize_min_us\\":"
+              << fused_selected_q6_expert8_gpu.timing.q8_quantize_min_us << ",";
+    std::cout << "\\"fused_selected_q6_expert8_down_min_us\\":"
+              << fused_selected_q6_expert8_gpu.timing.down.min_us << ",";
+    std::cout << "\\"fused_selected_q6_expert8_rowstripe_shell_sum_min_us\\":"
+              << fused_selected_q6_expert8_rowstripe_gpu.timing.shell_sum_min_us << ",";
+    std::cout << "\\"fused_selected_q6_expert8_rowstripe_gate_up_min_us\\":"
+              << fused_selected_q6_expert8_rowstripe_gpu.timing.gate_up.min_us << ",";
+    std::cout << "\\"fused_selected_q6_expert8_rowstripe_swiglu_min_us\\":"
+              << fused_selected_q6_expert8_rowstripe_gpu.timing.swiglu_min_us << ",";
+    std::cout << "\\"fused_selected_q6_expert8_rowstripe_q8_quantize_min_us\\":"
+              << fused_selected_q6_expert8_rowstripe_gpu.timing.q8_quantize_min_us << ",";
+    std::cout << "\\"fused_selected_q6_expert8_rowstripe_down_min_us\\":"
+              << fused_selected_q6_expert8_rowstripe_gpu.timing.down.min_us << ",";
+    std::cout << "\\"resident_two_linear_plus_layer7_attention_ffn_kernel_sum_min_us\\":"
+''',
+  )
+  return cpp
+
+
+def iso_now() -> str:
+  return dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def utc_stamp() -> str:
+  return dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+
+def parse_args() -> argparse.Namespace:
+  parser = argparse.ArgumentParser(description=__doc__)
+  parser.add_argument("--target", "--host", dest="host", metavar="TARGET", default=DEFAULT_HOST)
+  parser.add_argument("--model", default=DEFAULT_MODEL)
+  parser.add_argument("--env-script", default=DEFAULT_ENV_SCRIPT)
+  parser.add_argument("--staging-root", "--remote-root", dest="remote_root", metavar="PATH", default=DEFAULT_REMOTE_ROOT)
+  parser.add_argument("--oracle-bundle", type=Path, default=DEFAULT_ORACLE_BUNDLE)
+  parser.add_argument("--all-history-json", type=Path, default=DEFAULT_ALL_HISTORY)
+  parser.add_argument("--layer", type=int, default=5)
+  parser.add_argument("--resident-invocations", type=int, default=5)
+  parser.add_argument("--device-substring", default="B390")
+  parser.add_argument("--timeout-s", type=int, default=1200)
+  parser.add_argument("--conv-history-probe", type=Path, default=None)
+  parser.add_argument("--next-conv-history-probe", type=Path, default=None)
+  parser.add_argument("--out-dir", type=Path, default=None)
+  return parser.parse_args()
+
+
+def find_ffn_payload(pattern: str, expected_bytes: int) -> Path:
+  matches = sorted(FFN_PAYLOAD_ROOT.glob(pattern))
+  if len(matches) != 1:
+    raise SystemExit(f"expected one layer7 FFN payload for {pattern}, found {len(matches)}")
+  path = matches[0].resolve()
+  if path.stat().st_size != expected_bytes:
+    raise SystemExit(f"payload size mismatch for {path}: {path.stat().st_size}")
+  return path
+
+
+def payload_record(path: Path, stage_name: str, expected_bytes: int) -> dict[str, Any]:
+  path = path.resolve()
+  if path.stat().st_size != expected_bytes:
+    raise SystemExit(f"payload size mismatch for {path}: {path.stat().st_size}")
+  return {
+      "local_path": path,
+      "path": str(path.relative_to(ROOT)),
+      "sha256": iq36_local.sha256_file(path),
+      "size_bytes": expected_bytes,
+      "stage_name": stage_name,
+  }
+
+
+def add_layer7_ffn_payloads(payloads: dict[str, dict[str, Any]]) -> None:
+  for name, (stage_name, pattern, expected_bytes) in FFN_PAYLOAD_SPECS.items():
+    payloads[name] = payload_record(
+        find_ffn_payload(pattern, expected_bytes),
+        stage_name,
+        expected_bytes,
+    )
+
+
+def resident_fields_ok(probe: dict[str, Any] | None, expected_invocations: int) -> bool:
+  return (
+      isinstance(probe, dict)
+      and probe.get("resident_api") == "two_linear_layer_to_full_attention_v_q6_ffn_q6_down_load_once_run_many"
+      and probe.get("resident_load_count") == 1
+      and probe.get("resident_shell_invocations") == expected_invocations
+      and probe.get("full_attn_v_projection_boundary") == "gpu_q6_raw_matvec"
+      and probe.get("full_attn_ffn_boundary") == "gpu_q6_down_captured_post_norm"
+      and probe.get("ffn_input_boundary") == "captured_post_attention_norm"
+      and PRECONV.nested_bool(probe, "checks", "resident_load_once")
+      and PRECONV.nested_bool(probe, "checks", "resident_shell_invocations_positive")
+      and PRECONV.nested_bool(probe, "checks", "selected_q8_device_matches_host")
+  )
+
+
+def comparison_passed(probe: dict[str, Any] | None, name: str, lane: str) -> bool:
+  return CORE.comparison_passed(probe, name, lane)
+
+
+def write_summary(path: Path, payload: dict[str, Any]) -> None:
+  probe = payload.get("probe") if isinstance(payload.get("probe"), dict) else {}
+  timings = probe.get("timings", {}) if isinstance(probe, dict) else {}
+  comparisons = probe.get("comparisons", {}) if isinstance(probe, dict) else {}
+  lines = [
+      "# GPU Resident Layer-7 FFN Q6 Down Handoff Probe",
+      "",
+      f"- workstream: `{WORKSTREAM}`",
+      f"- host: `{payload.get('host')}`",
+      f"- model: `{payload.get('model')}`",
+      f"- layers: `{payload.get('layers')}`",
+      f"- required checks passed: `{str(payload.get('required_checks_passed')).lower()}`",
+      "- speedup claims allowed: `false`",
+      f"- resident API: `{probe.get('resident_api')}`",
+      f"- resident shell invocations: `{probe.get('resident_shell_invocations')}`",
+      f"- V projection boundary: `{probe.get('full_attn_v_projection_boundary')}`",
+      f"- FFN boundary: `{probe.get('full_attn_ffn_boundary')}`",
+      f"- FFN input boundary: `{probe.get('ffn_input_boundary')}`",
+      "",
+      "| output | comparison | max abs | RMSE |",
+      "|---|---|---:|---:|",
+  ]
+  for name in (
+      "l2_selected_down",
+      "l2_rowstripe_selected_q6_down",
+      "l2_fused_selected_q6_down",
+      "l2_fused_selected_q6_down_sorted_reorder",
+      "l2_fused_selected_q6_down_concat_deferred_sorted_reorder",
+      "l2_fused_selected_q6_down_expert8",
+      "l2_fused_selected_q6_down_expert8_rowstripe",
+      "l2_shared_down",
+      "l2_ffn_out",
+      "l2_layer_output_derived",
+  ):
+    group = comparisons.get(name, {}) if isinstance(comparisons, dict) else {}
+    lane = group.get("gpu_vs_oracle", {}) if isinstance(group, dict) else {}
+    lines.append(f"| {name} | gpu_vs_oracle | {lane.get('max_abs_diff')} | {lane.get('rmse')} |")
+  lines += [
+      "",
+      "| kernel group | min us |",
+      "|---|---:|",
+      f"| layer7_attention_total | {timings.get('resident_layer7_full_attention_kernel_sum_min_us') if isinstance(timings, dict) else None} |",
+      f"| layer7_ffn_q6_down | {timings.get('resident_layer7_ffn_q6_down_kernel_sum_min_us') if isinstance(timings, dict) else None} |",
+      f"| selected_q8_device_quantize | {timings.get('selected_q8_device_quantize_min_us') if isinstance(timings, dict) else None} |",
+      f"| rowstripe_selected_q6_down | {timings.get('rowstripe_selected_q6_down_min_us') if isinstance(timings, dict) else None} |",
+      f"| fused_selected_q6_handoff | {timings.get('fused_selected_q6_shell_sum_min_us') if isinstance(timings, dict) else None} |",
+      f"| fused_selected_q6_sorted_handoff | {timings.get('fused_selected_q6_sorted_shell_sum_min_us') if isinstance(timings, dict) else None} |",
+      f"| fused_selected_q6_concat_deferred_sorted_handoff | {timings.get('fused_selected_q6_concat_deferred_sorted_shell_sum_min_us') if isinstance(timings, dict) else None} |",
+      f"| fused_selected_q6_expert8_handoff | {timings.get('fused_selected_q6_expert8_shell_sum_min_us') if isinstance(timings, dict) else None} |",
+      f"| fused_selected_q6_expert8_rowstripe_handoff | {timings.get('fused_selected_q6_expert8_rowstripe_shell_sum_min_us') if isinstance(timings, dict) else None} |",
+      f"| two_linear_plus_layer7_attention_ffn | {timings.get('resident_two_linear_plus_layer7_attention_ffn_kernel_sum_min_us') if isinstance(timings, dict) else None} |",
+      "",
+      "This target-side process still carries layer 5 and layer 6 GPU outputs",
+      "into layer 7 and computes the closed layer-7 attention path. The FFN",
+      "handoff starts from captured layer-7 post-attention RMSNorm, then runs",
+      "selected/shared Q6 down projections and FFN tail on GPU. This is captured",
+      "single-token evidence, not decode throughput.",
+      "",
+  ]
+  path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def main() -> int:
+  args = parse_args()
+  if args.resident_invocations <= 0:
+    raise SystemExit("--resident-invocations must be positive")
+  if args.layer != 5:
+    raise SystemExit("--layer must be 5 for the layer-7 FFN Q6 down handoff")
+
+  layer0 = args.layer
+  layer1 = args.layer + 1
+  layer2 = args.layer + 2
+  conv0_path = (
+      args.conv_history_probe.resolve()
+      if args.conv_history_probe is not None
+      else TWO.latest_conv_history_probe_for_layer(layer0).resolve()
+  )
+  conv1_path = (
+      args.next_conv_history_probe.resolve()
+      if args.next_conv_history_probe is not None
+      else TWO.latest_conv_history_probe_for_layer(layer1).resolve()
+  )
+  all_history_json = args.all_history_json.resolve()
+  stamp = utc_stamp()
+  created_at = iso_now()
+  out_dir = args.out_dir or ROOT / f"output/gpu-resident-layer7-ffn-q6-down-handoff-probe-{stamp}"
+  out_dir.mkdir(parents=True, exist_ok=False)
+  raw_dir = out_dir / "raw"
+  raw_dir.mkdir()
+
+  payloads0, conv0 = TWO.prefixed_payloads(layer0, conv0_path, "l0")
+  payloads1, conv1 = TWO.prefixed_payloads(layer1, conv1_path, "l1")
+  full_payloads, all_history = L7_INPUT.resolve_full_attention_payloads(all_history_json, layer2)
+  CORE.add_layer7_tail_payloads(full_payloads)
+  add_layer7_ffn_payloads(full_payloads)
+  payloads = {**payloads0, **payloads1, **full_payloads}
+  opencl_source = OPENCL_SOURCE.read_text(encoding="utf-8")
+  opencl_source_hash = iq36_local.sha256_file(OPENCL_SOURCE)
+  embedded_opencl_hash = hashlib.sha256(
+      (
+          opencl_source
+          + PRECONV.POSTCONV.ATTENTION.ATTENTION_EXTRA_OPENCL
+          + CORE.FULL_ATTN_CORE_EXTRA_OPENCL
+      ).encode("utf-8")
+  ).hexdigest()
+  local_cpp = out_dir / "gpu_resident_layer7_ffn_q6_down_handoff_probe.cpp"
+  local_cpp.write_text(ffn_q6_probe_cpp(opencl_source), encoding="utf-8")
+
+  remote_dir = f"{args.remote_root.rstrip('/')}/gpu-resident-layer7-ffn-q6-down-handoff-probe-{stamp}"
+  setup = iq36_local.run_target(
+      args.host,
+      "rm -rf " + shlex.quote(remote_dir) + " && mkdir -p "
+      + " ".join(
+          shlex.quote(f"{remote_dir}/{subdir}")
+          for subdir in ("include/intel_qwen36", "src", "tests", "build", "oracle")
+      ),
+      args.timeout_s,
+  )
+  transfers: list[dict[str, Any]] = []
+  payload_transfers: dict[str, dict[str, Any]] = {
+      name: {"returncode": 1, "stdout": "", "stderr": "stage failed"}
+      for name in payloads
+  }
+  remote_payload_dir = f"{remote_dir}/oracle"
+  if setup.get("returncode") == 0:
+    for local, remote in PRECONV.POSTCONV.ATTENTION.SHARED.SELECTED.SOURCE_FILES:
+      transfers.append(
+          iq36_local.copy_to(args.host, ROOT / local, f"{remote_dir}/{remote}", args.timeout_s)
+      )
+    transfers.append(
+        iq36_local.copy_to(
+            args.host,
+            local_cpp,
+            f"{remote_dir}/tests/gpu_resident_layer7_ffn_q6_down_handoff_probe.cpp",
+            args.timeout_s,
+        )
+    )
+    for name, payload in payloads.items():
+      payload_transfers[name] = iq36_local.copy_to(
+          args.host,
+          payload["local_path"],
+          f"{remote_payload_dir}/{payload['stage_name']}",
+          args.timeout_s,
+      )
+
+  executable = f"{remote_dir}/build/iq36-gpu-resident-layer7-ffn-q6-down-handoff-probe"
+  compile_cmd = " && ".join([
+      f"source {shlex.quote(args.env_script)} >/dev/null 2>&1",
+      (
+          "g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic "
+          f"-I {shlex.quote(remote_dir + '/include')} "
+          f"{shlex.quote(remote_dir + '/src/gguf_loader.cpp')} "
+          f"{shlex.quote(remote_dir + '/src/gpu_q4x8_matvec.cpp')} "
+          f"{shlex.quote(remote_dir + '/tests/gpu_resident_layer7_ffn_q6_down_handoff_probe.cpp')} "
+          "-ldl -pthread "
+          f"-o {shlex.quote(executable)}"
+      ),
+  ])
+  stage_ok = (
+      setup.get("returncode") == 0
+      and transfers
+      and all(item.get("returncode") == 0 for item in transfers)
+      and all(item.get("returncode") == 0 for item in payload_transfers.values())
+  )
+  compile_result = (
+      iq36_local.run_target(args.host, compile_cmd, args.timeout_s)
+      if stage_ok
+      else {"cmd": ["stage"], "returncode": 1, "stdout": "", "stderr": "stage failed"}
+  )
+  run_argv = [
+      executable,
+      "--model", args.model,
+      "--payload-dir", remote_payload_dir,
+      "--layer", str(args.layer),
+      "--repeat", str(args.resident_invocations),
+      "--device-substring", args.device_substring,
+  ]
+  run_result = (
+      iq36_local.run_target(
+          args.host,
+          " && ".join([
+              f"source {shlex.quote(args.env_script)} >/dev/null 2>&1",
+              PRECONV.shell_join(run_argv),
+          ]),
+          args.timeout_s,
+      )
+      if compile_result.get("returncode") == 0
+      else {"cmd": run_argv, "returncode": None, "stdout": "", "stderr": "compile skipped run"}
+  )
+  probe = PRECONV.parse_probe_stdout(run_result.get("stdout", ""))
+
+  iq36_local.write_json(raw_dir / "setup.json", setup)
+  iq36_local.write_json(raw_dir / "transfers.json", transfers)
+  iq36_local.write_json(raw_dir / "payload-transfers.json", payload_transfers)
+  iq36_local.write_json(raw_dir / "compile.json", compile_result)
+  iq36_local.write_json(raw_dir / "run.json", run_result)
+  if probe is not None:
+    iq36_local.write_json(out_dir / "probe-result.json", probe)
+
+  checks = [
+      {"name": "remote_dir_created", "pass": setup.get("returncode") == 0},
+      {"name": "source_files_transferred", "pass": bool(transfers) and all(item.get("returncode") == 0 for item in transfers)},
+      {"name": "oracle_payloads_transferred", "pass": all(item.get("returncode") == 0 for item in payload_transfers.values())},
+      {"name": "probe_compiled", "pass": compile_result.get("returncode") == 0},
+      {"name": "probe_stdout_json_parsed", "pass": isinstance(probe, dict)},
+      {"name": "probe_process_succeeded", "pass": run_result.get("returncode") == 0},
+      {"name": "arc_b390_selected", "pass": bool(probe and "B390" in str(probe.get("device_name", "")) and "B390" in str(probe.get("selected_q8_device_name", "")) and "B390" in str(probe.get("rowstripe_selected_q6_device_name", "")) and "B390" in str(probe.get("fused_selected_q6_device_name", "")) and "B390" in str(probe.get("fused_selected_q6_sorted_device_name", "")) and "B390" in str(probe.get("fused_selected_q6_concat_deferred_sorted_device_name", "")) and "B390" in str(probe.get("fused_selected_q6_expert8_device_name", "")) and "B390" in str(probe.get("fused_selected_q6_expert8_rowstripe_device_name", "")))},
+      {"name": "resident_api_fields_present", "pass": resident_fields_ok(probe, args.resident_invocations)},
+      {"name": "layer2_ffn_tensor_shapes_ok", "pass": PRECONV.nested_bool(probe, "checks", "layer2_ffn_tensor_shapes_ok")},
+      {"name": "layer2_core_output_matches_oracle", "pass": PRECONV.nested_bool(probe, "checks", "layer2_full_attn_core_output_matches_oracle")},
+      {"name": "selected_down_matches_oracle", "pass": comparison_passed(probe, "l2_selected_down", "gpu_vs_oracle")},
+      {"name": "rowstripe_selected_q6_down_matches_oracle", "pass": comparison_passed(probe, "l2_rowstripe_selected_q6_down", "gpu_vs_oracle")},
+      {"name": "fused_selected_q6_down_matches_oracle", "pass": comparison_passed(probe, "l2_fused_selected_q6_down", "gpu_vs_oracle")},
+      {"name": "fused_selected_q6_down_sorted_reorder_matches_oracle", "pass": comparison_passed(probe, "l2_fused_selected_q6_down_sorted_reorder", "gpu_vs_oracle")},
+      {"name": "fused_selected_q6_down_concat_deferred_sorted_reorder_matches_oracle", "pass": comparison_passed(probe, "l2_fused_selected_q6_down_concat_deferred_sorted_reorder", "gpu_vs_oracle")},
+      {"name": "fused_selected_q6_down_expert8_matches_oracle", "pass": comparison_passed(probe, "l2_fused_selected_q6_down_expert8", "gpu_vs_oracle")},
+      {"name": "fused_selected_q6_down_expert8_rowstripe_matches_oracle", "pass": comparison_passed(probe, "l2_fused_selected_q6_down_expert8_rowstripe", "gpu_vs_oracle")},
+      {"name": "selected_q8_device_matches_host", "pass": PRECONV.nested_bool(probe, "checks", "selected_q8_device_matches_host")},
+      {"name": "shared_down_matches_oracle", "pass": comparison_passed(probe, "l2_shared_down", "gpu_vs_oracle")},
+      {"name": "ffn_out_matches_oracle", "pass": comparison_passed(probe, "l2_ffn_out", "gpu_vs_oracle")},
+      {"name": "derived_layer_output_matches_oracle", "pass": comparison_passed(probe, "l2_layer_output_derived", "gpu_vs_oracle")},
+      {"name": "gpu_event_timing_positive", "pass": PRECONV.nested_bool(probe, "checks", "gpu_event_timing_positive")},
+      {"name": "speedup_claims_forbidden", "pass": True},
+  ]
+  required_checks_passed = all(item["pass"] for item in checks)
+  slim_payloads = {
+      name: {key: value for key, value in payload.items() if key != "local_path"}
+      for name, payload in payloads.items()
+  }
+  comparison_thresholds = {
+      "strict_component": CORE.STRICT_COMPARISON_THRESHOLDS,
+      "full_attn_component": CORE.FULL_ATTN_COMPARISON_THRESHOLDS,
+  }
+  payload = {
+      "schema_version": SCHEMA_VERSION,
+      "workstream": WORKSTREAM,
+      "created_at": created_at,
+      "host": args.host,
+      "remote_dir": remote_dir,
+      "model": args.model,
+      "oracle_bundle": str(args.oracle_bundle.resolve().relative_to(ROOT)),
+      "conv_history_probes": {
+          "layer0": str(conv0_path.relative_to(ROOT)),
+          "layer1": str(conv1_path.relative_to(ROOT)),
+      },
+      "conv_history_capture_artifacts": {
+          "layer0": conv0.get("capture_artifact"),
+          "layer1": conv1.get("capture_artifact"),
+      },
+      "all_history": all_history,
+      "ffn_payload_root": str(FFN_PAYLOAD_ROOT.relative_to(ROOT)),
+      "payloads": slim_payloads,
+      "layers": [layer0, layer1, layer2],
+      "resident_invocations": args.resident_invocations,
+      "opencl_source": str(OPENCL_SOURCE.relative_to(ROOT)),
+      "opencl_source_sha256": opencl_source_hash,
+      "embedded_opencl_source_sha256": embedded_opencl_hash,
+      "comparison_thresholds": comparison_thresholds,
+      "probe": probe,
+      "checks": checks,
+      "required_checks_passed": required_checks_passed,
+      "speedup_claims_allowed": False,
+  }
+  manifest = {
+      "schema_version": SCHEMA_VERSION,
+      "workstream": WORKSTREAM,
+      "created_at": created_at,
+      "tool": "tools/intel-qwen36-gpu-resident-layer7-ffn-q6-down-handoff-probe.py",
+      "artifact": str(out_dir),
+      "host": args.host,
+      "remote_dir": remote_dir,
+      "layers": [layer0, layer1, layer2],
+      "resident_invocations": args.resident_invocations,
+      "conv_history_probes": payload["conv_history_probes"],
+      "required_checks_passed": required_checks_passed,
+      "speedup_claims_allowed": False,
+  }
+  correctness = {
+      "schema_version": SCHEMA_VERSION,
+      "workstream": WORKSTREAM,
+      "comparison_thresholds": comparison_thresholds,
+      "checks": checks,
+      "required_checks_passed": required_checks_passed,
+      "speedup_claims_allowed": False,
+  }
+  iq36_local.write_json(out_dir / "probe.json", payload)
+  iq36_local.write_json(out_dir / "manifest.json", manifest)
+  iq36_local.write_json(out_dir / "correctness.json", correctness)
+
+  aggregate = probe if isinstance(probe, dict) else {}
+  timings = aggregate.get("timings", {}) if isinstance(aggregate.get("timings"), dict) else {}
+  comparisons = aggregate.get("comparisons", {}) if isinstance(aggregate.get("comparisons"), dict) else {}
+  iq36_local.write_metric(
+      out_dir / "metrics.jsonl",
+      "gpu_resident_layer7_ffn_q6_down_handoff_probe",
+      [
+          ("required_checks_passed", required_checks_passed),
+          ("resident_shell_invocations", args.resident_invocations),
+          ("resident_layer7_ffn_q6_down_kernel_sum_min_us", PRECONV.nested_number(timings, "resident_layer7_ffn_q6_down_kernel_sum_min_us")),
+          ("selected_q8_device_quantize_min_us", PRECONV.nested_number(timings, "selected_q8_device_quantize_min_us")),
+          ("rowstripe_selected_q6_down_min_us", PRECONV.nested_number(timings, "rowstripe_selected_q6_down_min_us")),
+          ("rowstripe_selected_q6_down_mean_us", PRECONV.nested_number(timings, "rowstripe_selected_q6_down_mean_us")),
+          ("rowstripe_selected_q6_down_global_work_items", PRECONV.nested_number(timings, "rowstripe_selected_q6_down_global_work_items")),
+          ("rowstripe_selected_q6_conversion_us", PRECONV.nested_number(timings, "rowstripe_selected_q6_conversion_us")),
+          ("rowstripe_selected_q6_rows_per_tile", PRECONV.nested_number(timings, "rowstripe_selected_q6_rows_per_tile")),
+          ("rowstripe_selected_q6_row_tile_count", PRECONV.nested_number(timings, "rowstripe_selected_q6_row_tile_count")),
+          ("fused_selected_q6_shell_sum_min_us", PRECONV.nested_number(timings, "fused_selected_q6_shell_sum_min_us")),
+          ("fused_selected_q6_gate_up_min_us", PRECONV.nested_number(timings, "fused_selected_q6_gate_up_min_us")),
+          ("fused_selected_q6_swiglu_min_us", PRECONV.nested_number(timings, "fused_selected_q6_swiglu_min_us")),
+          ("fused_selected_q6_q8_quantize_min_us", PRECONV.nested_number(timings, "fused_selected_q6_q8_quantize_min_us")),
+          ("fused_selected_q6_down_min_us", PRECONV.nested_number(timings, "fused_selected_q6_down_min_us")),
+          ("fused_selected_q6_sorted_shell_sum_min_us", PRECONV.nested_number(timings, "fused_selected_q6_sorted_shell_sum_min_us")),
+          ("fused_selected_q6_sorted_gate_up_min_us", PRECONV.nested_number(timings, "fused_selected_q6_sorted_gate_up_min_us")),
+          ("fused_selected_q6_sorted_swiglu_min_us", PRECONV.nested_number(timings, "fused_selected_q6_sorted_swiglu_min_us")),
+          ("fused_selected_q6_sorted_q8_quantize_min_us", PRECONV.nested_number(timings, "fused_selected_q6_sorted_q8_quantize_min_us")),
+          ("fused_selected_q6_sorted_down_min_us", PRECONV.nested_number(timings, "fused_selected_q6_sorted_down_min_us")),
+          ("fused_selected_q6_concat_deferred_sorted_shell_sum_min_us", PRECONV.nested_number(timings, "fused_selected_q6_concat_deferred_sorted_shell_sum_min_us")),
+          ("fused_selected_q6_concat_deferred_sorted_gate_up_min_us", PRECONV.nested_number(timings, "fused_selected_q6_concat_deferred_sorted_gate_up_min_us")),
+          ("fused_selected_q6_concat_deferred_sorted_swiglu_min_us", PRECONV.nested_number(timings, "fused_selected_q6_concat_deferred_sorted_swiglu_min_us")),
+          ("fused_selected_q6_concat_deferred_sorted_q8_quantize_min_us", PRECONV.nested_number(timings, "fused_selected_q6_concat_deferred_sorted_q8_quantize_min_us")),
+          ("fused_selected_q6_concat_deferred_sorted_down_min_us", PRECONV.nested_number(timings, "fused_selected_q6_concat_deferred_sorted_down_min_us")),
+          ("fused_selected_q6_expert8_shell_sum_min_us", PRECONV.nested_number(timings, "fused_selected_q6_expert8_shell_sum_min_us")),
+          ("fused_selected_q6_expert8_gate_up_min_us", PRECONV.nested_number(timings, "fused_selected_q6_expert8_gate_up_min_us")),
+          ("fused_selected_q6_expert8_swiglu_min_us", PRECONV.nested_number(timings, "fused_selected_q6_expert8_swiglu_min_us")),
+          ("fused_selected_q6_expert8_q8_quantize_min_us", PRECONV.nested_number(timings, "fused_selected_q6_expert8_q8_quantize_min_us")),
+          ("fused_selected_q6_expert8_down_min_us", PRECONV.nested_number(timings, "fused_selected_q6_expert8_down_min_us")),
+          ("fused_selected_q6_expert8_rowstripe_shell_sum_min_us", PRECONV.nested_number(timings, "fused_selected_q6_expert8_rowstripe_shell_sum_min_us")),
+          ("fused_selected_q6_expert8_rowstripe_gate_up_min_us", PRECONV.nested_number(timings, "fused_selected_q6_expert8_rowstripe_gate_up_min_us")),
+          ("fused_selected_q6_expert8_rowstripe_swiglu_min_us", PRECONV.nested_number(timings, "fused_selected_q6_expert8_rowstripe_swiglu_min_us")),
+          ("fused_selected_q6_expert8_rowstripe_q8_quantize_min_us", PRECONV.nested_number(timings, "fused_selected_q6_expert8_rowstripe_q8_quantize_min_us")),
+          ("fused_selected_q6_expert8_rowstripe_down_min_us", PRECONV.nested_number(timings, "fused_selected_q6_expert8_rowstripe_down_min_us")),
+          ("selected_q8_device_qs_mismatch_count", PRECONV.nested_number(comparisons, "l2_selected_q8_device_vs_host", "qs_mismatch_count")),
+          ("selected_q8_device_max_abs_d_diff", PRECONV.nested_number(comparisons, "l2_selected_q8_device_vs_host", "max_abs_d_diff")),
+          ("selected_down_gpu_vs_oracle_max_abs_diff", PRECONV.nested_number(comparisons, "l2_selected_down", "gpu_vs_oracle", "max_abs_diff")),
+          ("rowstripe_selected_q6_down_gpu_vs_oracle_max_abs_diff", PRECONV.nested_number(comparisons, "l2_rowstripe_selected_q6_down", "gpu_vs_oracle", "max_abs_diff")),
+          ("fused_selected_q6_down_gpu_vs_oracle_max_abs_diff", PRECONV.nested_number(comparisons, "l2_fused_selected_q6_down", "gpu_vs_oracle", "max_abs_diff")),
+          ("fused_selected_q6_down_sorted_reorder_gpu_vs_oracle_max_abs_diff", PRECONV.nested_number(comparisons, "l2_fused_selected_q6_down_sorted_reorder", "gpu_vs_oracle", "max_abs_diff")),
+          ("fused_selected_q6_down_concat_deferred_sorted_reorder_gpu_vs_oracle_max_abs_diff", PRECONV.nested_number(comparisons, "l2_fused_selected_q6_down_concat_deferred_sorted_reorder", "gpu_vs_oracle", "max_abs_diff")),
+          ("fused_selected_q6_down_expert8_gpu_vs_oracle_max_abs_diff", PRECONV.nested_number(comparisons, "l2_fused_selected_q6_down_expert8", "gpu_vs_oracle", "max_abs_diff")),
+          ("fused_selected_q6_down_expert8_rowstripe_gpu_vs_oracle_max_abs_diff", PRECONV.nested_number(comparisons, "l2_fused_selected_q6_down_expert8_rowstripe", "gpu_vs_oracle", "max_abs_diff")),
+          ("shared_down_gpu_vs_oracle_max_abs_diff", PRECONV.nested_number(comparisons, "l2_shared_down", "gpu_vs_oracle", "max_abs_diff")),
+          ("ffn_out_gpu_vs_oracle_max_abs_diff", PRECONV.nested_number(comparisons, "l2_ffn_out", "gpu_vs_oracle", "max_abs_diff")),
+          ("derived_layer_output_gpu_vs_oracle_max_abs_diff", PRECONV.nested_number(comparisons, "l2_layer_output_derived", "gpu_vs_oracle", "max_abs_diff")),
+      ],
+  )
+  write_summary(out_dir / "summary.md", payload)
+  print(out_dir)
+  return 0 if required_checks_passed else 1
+
+
+if __name__ == "__main__":
+  raise SystemExit(main())

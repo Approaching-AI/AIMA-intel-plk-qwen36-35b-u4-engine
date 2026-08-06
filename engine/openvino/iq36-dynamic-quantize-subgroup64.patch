@@ -1,0 +1,87 @@
+diff --git a/src/plugins/intel_gpu/src/kernel_selector/cl_kernels/dynamic_quantize_gpu_opt.cl b/src/plugins/intel_gpu/src/kernel_selector/cl_kernels/dynamic_quantize_gpu_opt.cl
+index f7f184c4..3931d672 100644
+--- a/src/plugins/intel_gpu/src/kernel_selector/cl_kernels/dynamic_quantize_gpu_opt.cl
++++ b/src/plugins/intel_gpu/src/kernel_selector/cl_kernels/dynamic_quantize_gpu_opt.cl
+@@ -44,6 +44,44 @@ KERNEL(dynamic_quantize_gpu_opt)(
+ #endif
+     ) {
+ 
++#if PARALLEL_SMALL_GS
++    const uint bf = (uint)get_global_id(2);
++    const uint b = bf / INPUT0_FEATURE_NUM;
++    const uint f = bf % INPUT0_FEATURE_NUM;
++    const uint f_grp = (uint)get_global_id(1);
++    const uint sglid = get_sub_group_local_id();
++#if OUTPUT_DIMS == 2
++    const uint input_offset = INPUT0_GET_INDEX(bf, f_grp * QUANTIZE_GROUP_SIZE, 0, 0);
++    const uint output_offset = OUTPUT_GET_INDEX(bf, f_grp * QUANTIZE_GROUP_SIZE, 0, 0);
++#else
++    const uint input_offset = INPUT0_GET_INDEX(b, f, f_grp * QUANTIZE_GROUP_SIZE, 0);
++    const uint output_offset = OUTPUT_GET_INDEX(b, f, f_grp * QUANTIZE_GROUP_SIZE, 0);
++#endif
++
++    const half4 input_0 = vload4(0, &input[input_offset + sglid * 4]);
++    half max_value = fmax(fmax(fabs(input_0[0]), fabs(input_0[1])),
++                          fmax(fabs(input_0[2]), fabs(input_0[3])));
++    max_value = fmax(ACT_MIN_VAL, sub_group_reduce_max(max_value));
++    const half quan_scale = 127.0h / max_value;
++    const char4 quantized_value = convert_char4_rte(input_0 * (half4)quan_scale);
++    vstore4(quantized_value, 0, &output[output_offset + sglid * 4]);
++
++#if OUTPUT_DIMS == 2
++    const uint output_idx = OUTPUT1_GET_INDEX(bf, f_grp, 0, 0);
++#else
++    const uint output_idx = OUTPUT1_GET_INDEX(b, f, f_grp, 0);
++#endif
++    if (sglid == 0)
++        output_scale[output_idx] = 1.0h / quan_scale;
++
++#if GENERATE_PRECOMPUTED_REDUCTION
++    int precomputed_reduction = quantized_value[0] + quantized_value[1] +
++                                quantized_value[2] + quantized_value[3];
++    precomputed_reduction = sub_group_reduce_add(precomputed_reduction);
++    if (sglid == 0)
++        output_precomputed_reduction[output_idx] = precomputed_reduction;
++#endif
++#else
+ #if OUTPUT_DIMS == 2
+     const uint b = get_global_id(0);
+     const uint f_grp = get_global_id(1);
+@@ -90,6 +128,7 @@ KERNEL(dynamic_quantize_gpu_opt)(
+     output_scale[output_idx] = 1.0h / quan_scale;
+ 
+     FOR_PRECOMPUTED_REDUCTION(output_precomputed_reduction[output_idx] = precomputed_reduction);
++#endif
+ }
+ 
+ // ***********************************************
+diff --git a/src/plugins/intel_gpu/src/kernel_selector/kernels/dynamic_quantize/dynamic_quantize_kernel_opt.cpp b/src/plugins/intel_gpu/src/kernel_selector/kernels/dynamic_quantize/dynamic_quantize_kernel_opt.cpp
+index 2460ea8d..0f702ac1 100644
+--- a/src/plugins/intel_gpu/src/kernel_selector/kernels/dynamic_quantize/dynamic_quantize_kernel_opt.cpp
++++ b/src/plugins/intel_gpu/src/kernel_selector/kernels/dynamic_quantize/dynamic_quantize_kernel_opt.cpp
+@@ -92,6 +92,9 @@ JitConstants DynamicQuantizeKernelOpt::GetJitConstants(const dynamic_quantize_pa
+     jit.AddConstant(MakeJitConstant("MODE_SMALL_GS", static_cast<int>(DynQuanMode::SMALL_GS)));
+     jit.AddConstant(MakeJitConstant("MODE_LARGE_GS", static_cast<int>(DynQuanMode::LARGE_GS)));
+     jit.AddConstant(MakeJitConstant("MODE_PER_TOKEN", static_cast<int>(DynQuanMode::PER_TOKEN)));
++    jit.AddConstant(MakeJitConstant("PARALLEL_SMALL_GS",
++                                    mode == DynQuanMode::SMALL_GS &&
++                                    params.group_sizes.back() == 64));
+     jit.Merge(GetTensorFriendlyWorkGroupsJit(params.outputs[0]));
+     jit.AddConstant(MakeJitConstant("TOTAL_BLOCK_NUM", total_block_num));
+     size_t block_num = (total_block_num > 32) ? 32 : total_block_num;
+@@ -111,8 +114,13 @@ CommonDispatchData DynamicQuantizeKernelOpt::SetDefault(const dynamic_quantize_p
+ 
+     if (mode == DynQuanMode::SMALL_GS) {
+         auto bf_size = get_input_bf_size(params);
+-        dispatchData.gws = {bf_size.first, bf_size.second / params.group_sizes.back(), 1};
+-        dispatchData.lws = {1, 1, 1};
++        if (params.group_sizes.back() == 64) {
++            dispatchData.gws = {simd, bf_size.second / params.group_sizes.back(), bf_size.first};
++            dispatchData.lws = {simd, 1, 1};
++        } else {
++            dispatchData.gws = {bf_size.first, bf_size.second / params.group_sizes.back(), 1};
++            dispatchData.lws = {1, 1, 1};
++        }
+     } else if (mode == DynQuanMode::LARGE_GS) {
+         auto vec_size = get_match_vector_size(params);
+         auto bf_size = get_input_bf_size(params);

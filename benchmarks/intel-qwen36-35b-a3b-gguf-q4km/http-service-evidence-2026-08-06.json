@@ -1,0 +1,175 @@
+{
+  "schema": "iq36-http-service-release-evidence-v2",
+  "captured_at": "2026-08-06",
+  "source_state": {
+    "base_commit": "5a6d9358256c4e03ef0c27d47ae051ef99fd6ab4",
+    "branch": "main",
+    "candidate_commit": null,
+    "candidate_state": "uncommitted pending public repository publication",
+    "diff_scope": [
+      "resident HTTP controller and isolated OpenVINO workers",
+      "OpenAI protocol, SSE, tools, structured outputs, and bounded state lifecycle",
+      "exact prefix cache and arbitrary-context routing",
+      "request timeout, cancellation watchdog, stable detokenization, and bounded metrics labels",
+      "model/plugin/config and exact runtime identity gates",
+      "offline Python wheelhouse, native deployment, security, and release documentation"
+    ]
+  },
+  "target": {
+    "alias": "local-ptl-target",
+    "model": "/home/intel/Qwen3.6-35B-A3B-ov",
+    "device": "GPU",
+    "batch_size": 1,
+    "openvino": "2026.2.0-21902-90214e5be05-releases/2026/2",
+    "openvino_genai": "2026.2.0.0-3121-adf73e80e66",
+    "openvino_tokenizers": "2026.2.0.0-681-f43dbd55981"
+  },
+  "identity": {
+    "model_files_sha256_verified": 12,
+    "model_bytes_sha256_verified": 19705459812,
+    "model_fingerprint": "eb05132e47fe0fd1dc42fa3082e7241696ed1449dec246a3cc14bef4af21d7ec",
+    "short_plugin_sha256": "b63eede5177f4f9e05d02e97d9f24f52b4289504c2a7c7b4e06c580d1d880e12",
+    "long_plugin_sha256": "01c04ced415a7b7a5e5bda77a995b2b97b68eb3d9f2c5f3396844d042ddda269",
+    "custom_config_sha256": "bd7a679031bbde2fa2626f2138bf79a5626469ccbc041faadef3b12e811200ad"
+  },
+  "fast_suite": {
+    "command": "PYTHONPATH=engine/service /home/intel/ov/openvino_env/bin/python -m unittest discover -s engine/service/tests -v",
+    "passed": 66,
+    "failed": 0
+  },
+  "real_http_smoke": {
+    "command": "/tmp/iq36-rc6-venv-20260806/bin/python tools/intel-qwen36-http-service-smoke.py --base-url http://127.0.0.1:18008 --output output/http-service-smoke-max-offline-rc6-20260806/result.json --long --max-context --timeout 1800",
+    "artifact": "output/http-service-smoke-max-offline-rc6-20260806/result.json",
+    "artifact_sha256": "bf2dec2297b6d892bd7d863609fabe2bdbe32646da07a2c25395cb1b541b1635",
+    "checks_passed": 17,
+    "checks_failed": 0,
+    "selected_observations": {
+      "chat_json_ms": 928.3641980000539,
+      "chat_sse_ms": 824.2540630017174,
+      "responses_sse_ms": 793.9634110080078,
+      "responses_retrieve_delete_lifecycle_ms": 1.900913004647009,
+      "prefix_first_ms": 808.6126490088645,
+      "prefix_hit_ms": 629.8342080117436,
+      "prefix_hit_cached_tokens": 18,
+      "prefix_bypass_ms": 467.4751679995097,
+      "prefix_bypass_cached_tokens": 0,
+      "arbitrary_33_token_ms": 510.73809700028505,
+      "long_compact_8207_total_ms_including_worker_switch": 27714.176907989895,
+      "long_full_8207_total_ms_including_worker_switch": 28446.607795995078,
+      "maximum_131072_total_ms_including_worker_switch": 174204.12517900695
+    },
+    "performance_interpretation": "operational service evidence only; formal speed claims remain seq2300 cold no-prefix paired ABBA evidence"
+  },
+  "openai_sdk": {
+    "python_package_version": "2.53.0",
+    "artifact": "output/http-service-smoke-sdk-rc8-20260806/result.json",
+    "artifact_sha256": "001b8f99693809892ee0ed2b7cfadeca26ec2bac6f5768e97a0ce3ff9a0c5514",
+    "checks_passed": 19,
+    "passed": [
+      "models.list and models.retrieve",
+      "completions.create JSON and stream",
+      "chat.completions.create JSON and stream",
+      "responses.create JSON and responses.stream lifecycle",
+      "responses.retrieve, delete, and post-delete 404",
+      "Chat and Responses function tools"
+    ]
+  },
+  "runtime_bundle": {
+    "artifact": "output/http-runtime-assets-rc7-20260806/manifest.json",
+    "manifest_sha256": "e3a0532c2be10899b4bdfd6919150849dfe7c049910d9bc4238528f5e5f0babe",
+    "files": 42,
+    "runtime_payload_files": 33,
+    "source_transparency_files": 6,
+    "release_documentation_files": 3,
+    "runtime_payload_identical_to_smoked_rc1": true,
+    "smoke_reference": "output/http-runtime-assets-rc1-20260806/manifest.json",
+    "payload_identity_artifact": "output/http-runtime-assets-identity-rc7-20260806/result.json",
+    "payload_identity_artifact_sha256": "2fd40063fe63516b67d2e96deea060e1c3d1446be6b69d1876f5a4b0884144e2",
+    "project_license": "Apache-2.0",
+    "model_distribution_policy": "external_exact_hash_prerequisite",
+    "short_plugin_source_rebuild": {
+      "artifact": "output/http-openvino-source-rebuild-20260806/result.json",
+      "artifact_sha256": "b160eeeedd144f864e277e544f6806101b32f8f3c228815870ce748cceef1583",
+      "openvino_commit": "90214e5be052438cec5617ed3ea7e37df1538f68",
+      "onednn_commit": "20db47e2d3c4df1b66e93bed2e97d30da175512d",
+      "source_state_sha256": "0776ca91cd9359a200f1e9a51afaeca83c2e9a9c5952dc2e552839ef12085743",
+      "plugin_ci_build_identity": "2026.2.0-106-90214e5be05",
+      "files_verified": 50,
+      "plugin_bytes": 51325408,
+      "plugin_sha256": "b63eede5177f4f9e05d02e97d9f24f52b4289504c2a7c7b4e06c580d1d880e12",
+      "bit_identical_to_promoted": true,
+      "embedded_rpath_inhibited_dependency_preflight": true
+    },
+    "long_plugin_source_rebuild": {
+      "artifact": "output/http-openvino-long-source-rebuild-20260806/result.json",
+      "artifact_sha256": "86f8b04fa7f62046cdf408a840469ca9ce59a8964c1adc1ca573113f12b1936d",
+      "openvino_commit": "90214e5be052438cec5617ed3ea7e37df1538f68",
+      "onednn_commit": "20db47e2d3c4df1b66e93bed2e97d30da175512d",
+      "source_state_sha256": "b947c32eede6bb7f11429722503771706be6847cecf9905d58e9b0463f32817a",
+      "source_delta_sha256": "a38003733c79aafd062b59771dba57a784eb569bc25683206a46ac38048bef3e",
+      "source_files_verified": 50,
+      "profile_delta_files": 3,
+      "plugin_bytes": 51296736,
+      "plugin_sha256": "01c04ced415a7b7a5e5bda77a995b2b97b68eb3d9f2c5f3396844d042ddda269",
+      "bit_identical_to_promoted": true
+    }
+  },
+  "python_wheelhouse": {
+    "service_wheel": "output/http-service-dist-rc8-20260806/intel_qwen36_server-0.1.0-py3-none-any.whl",
+    "service_wheel_sha256": "e493d88b0d52d9b33548ee3b8163c9e5549be5155d35176bfdf533dc08394643",
+    "service_wheel_license_expression": "Apache-2.0",
+    "manifest": "output/http-python-wheelhouse-rc12-20260806/manifest.json",
+    "manifest_sha256": "fa6d57c30668740d4babe7037c1ca1795280758aebe6d9f009b3c5f429a5a66b",
+    "wheels": 14,
+    "openvino_record_files_verified": 1011,
+    "repeat_build_manifest_identical": true,
+    "fresh_venv_offline_install_and_pip_check_passed": true,
+    "hash_required_install_passed": true,
+    "offline_pip_bootstrap_version": "26.2.1",
+    "runtime_identity_verified": true,
+    "full_real_http_smoke_from_offline_install": true,
+    "final_wheel_payload_identical_to_smoked_wheelhouse": true,
+    "payload_identity_artifact": "output/http-python-wheelhouse-identity-rc12-20260806/result.json",
+    "payload_identity_artifact_sha256": "02a9523384cf50e418683330829c6aeee6c3b73783af19a6a034881a9ec583a1"
+  },
+  "native_deployment": {
+    "unit": "deploy/systemd/iq36.service",
+    "systemd_analyze_security_exposure": 1.7,
+    "systemd_analyze_security_rating": "OK",
+    "transient_hardened_mock_http": "pass",
+    "transient_hardened_real_openvino_short_worker_and_chat": "pass",
+    "note": "transient test used read-only home for development paths; shipped production unit uses protected home and /opt paths"
+  },
+  "security": {
+    "pip_audit_version": "2.10.1",
+    "index_resolvable_dependencies_audited": 10,
+    "known_vulnerabilities": 0,
+    "pip_audit_service": "OSV",
+    "pip_audit_artifact": "output/http-service-security-20260806/pip-audit-index-rc12.json",
+    "pip_audit_artifact_sha256": "25ec88b84edb7303c038821e878d0be7128f2e3703fedd055fc71a15f1f125ec",
+    "non_index_distributions": [
+      "openvino",
+      "openvino-genai",
+      "openvino-tokenizers",
+      "intel-qwen36-server"
+    ],
+    "non_index_security_evidence": "exact wheel hashes, installed RECORD verification, source provenance, service tests, and release scan",
+    "release_text_files_scanned": 2202,
+    "release_text_bytes_scanned": 64754686,
+    "secret_or_private_hostname_findings": 0,
+    "runtime_bundle_included_in_scan": true,
+    "release_audit_artifact": "output/http-service-security-20260806/release-audit-rc10.json",
+    "release_audit_artifact_sha256": "e5f2ed550df3400c12064192786e6f0ad5fc506bdb1fb06146b6e42647ba73cf"
+  },
+  "publication_policy": {
+    "repository_license": "Apache-2.0",
+    "model_distribution": "external_exact_hash_prerequisite",
+    "model_redistribution_claimed": false,
+    "source_publication_authorized": true
+  },
+  "public_release_ready": false,
+  "public_release_blockers": [
+    "create and verify the requested personal public repository and Approaching-AI fork",
+    "publish the accepted plugin and exact Python runtime binaries with generated notices and manifests"
+  ]
+}

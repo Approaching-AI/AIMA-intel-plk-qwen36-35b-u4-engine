@@ -1,0 +1,897 @@
+--- a/src/plugins/intel_gpu/src/graph/impls/ocl/iq36_lm_head_i8q4.cpp
++++ b/src/plugins/intel_gpu/src/graph/impls/ocl/iq36_lm_head_i8q4.cpp
+@@ -9,10 +9,13 @@
+ #include "primitive_base.hpp"
+ 
+ #include <algorithm>
++#include <cfenv>
+ #include <cmath>
++#include <cstdint>
+ #include <cstdlib>
+ #include <cstring>
+ #include <fstream>
++#include <limits>
+ #include <mutex>
+ #include <string>
+ #include <vector>
+@@ -53,6 +56,21 @@
+ constexpr float kBinaryGatedQ4CorrectionDelta = 8.0f;
+ constexpr size_t kBinaryGatedQ4PackedOffset = kBinaryPackedBytes;
+ constexpr size_t kBinaryGatedQ4PackedBytes = kBinaryPackedBytes + kPackedBytes;
++constexpr size_t kBinaryAffineQ4Groups = 16;
++constexpr size_t kBinaryAffineQ4GroupSize = 128;
++constexpr size_t kBinaryAffineQ4CorrectionCapacity = 16812;
++constexpr size_t kBinaryAffineQ4CodesOffset = kBinaryPackedBytes;
++constexpr size_t kBinaryAffineQ4CodeBytes = kRows * kColumns / 2;
++constexpr size_t kBinaryAffineQ4MinMaxOffset =
++    kBinaryAffineQ4CodesOffset + kBinaryAffineQ4CodeBytes;
++constexpr size_t kBinaryAffineQ4MinMaxBytes =
++    kRows * kBinaryAffineQ4Groups * 2;
++constexpr size_t kBinaryAffineQ4ResidualOffset =
++    kBinaryAffineQ4MinMaxOffset + kBinaryAffineQ4MinMaxBytes;
++constexpr size_t kBinaryAffineQ4ResidualBytes =
++    kRows * kBinaryAffineQ4Groups * sizeof(uint16_t);
++constexpr size_t kBinaryAffineQ4PackedBytes =
++    kBinaryAffineQ4ResidualOffset + kBinaryAffineQ4ResidualBytes;
+ constexpr uint32_t kTargetIpVersion = 0x07800004;
+ constexpr uint32_t kTargetEuCount = 96;
+ constexpr char kNodeId[] =
+@@ -108,6 +126,12 @@
+     "iq36_lm_head_i8q1_gated_q4_collect_f16";
+ constexpr char kBinaryGatedQ4CorrectionKernelName[] =
+     "iq36_lm_head_i8q1_gated_q4_correction_f16";
++constexpr char kBinaryAffineQ4HiddenNormsKernelName[] =
++    "iq36_lm_head_i8q1_affine_q4_hidden_group_norms_f16";
++constexpr char kBinaryAffineQ4BoundSelectKernelName[] =
++    "iq36_lm_head_i8q1_affine_q4_bound_select_f16";
++constexpr char kBinaryAffineQ4CorrectionKernelName[] =
++    "iq36_lm_head_i8_affine_q4_exact_candidates_f16";
+ 
+ bool binary_enabled() {
+     const char* value = std::getenv("IQ36_LM_HEAD_I8Q1");
+@@ -124,6 +148,13 @@
+     return binary_enabled() && value != nullptr && std::string(value) == "1";
+ }
+ 
++bool binary_affine_q4_enabled() {
++    const char* value =
++        std::getenv("IQ36_LM_HEAD_I8Q1_GATED_EXACT_AFFINE_Q4");
++    return binary_gated_exact_enabled() &&
++        value != nullptr && std::string(value) == "1";
++}
++
+ bool binary_greedy_local2_enabled() {
+     const char* value = std::getenv("IQ36_LM_HEAD_I8Q1_GREEDY_LOCAL2");
+     return binary_enabled() && value != nullptr && std::string(value) == "1";
+@@ -146,6 +177,89 @@
+     return value.get_linear_size();
+ }
+ 
++uint16_t float_to_half(float value) {
++    uint32_t bits = 0;
++    std::memcpy(&bits, &value, sizeof(bits));
++    const uint16_t sign = static_cast<uint16_t>((bits >> 16U) & 0x8000U);
++    const uint32_t exponent = (bits >> 23U) & 0xFFU;
++    const uint32_t mantissa = bits & 0x7FFFFFU;
++    if (exponent == 0xFFU) {
++        if (mantissa == 0U)
++            return static_cast<uint16_t>(sign | 0x7C00U);
++        return static_cast<uint16_t>(
++            sign | 0x7C00U | std::max(1U, mantissa >> 13U));
++    }
++    const int half_exponent = static_cast<int>(exponent) - 127 + 15;
++    if (half_exponent >= 31)
++        return static_cast<uint16_t>(sign | 0x7C00U);
++    if (half_exponent <= 0) {
++        if (half_exponent < -10)
++            return sign;
++        const uint32_t normalized = mantissa | 0x800000U;
++        const unsigned int shift =
++            static_cast<unsigned int>(14 - half_exponent);
++        const uint32_t halfway = UINT32_C(1) << (shift - 1U);
++        const uint32_t rounded =
++            (normalized + halfway - 1U +
++             ((normalized >> shift) & 1U)) >> shift;
++        return static_cast<uint16_t>(sign | rounded);
++    }
++    uint32_t rounded =
++        mantissa + 0xFFFU + ((mantissa >> 13U) & 1U);
++    uint32_t adjusted_exponent = static_cast<uint32_t>(half_exponent);
++    if ((rounded & 0x800000U) != 0U) {
++        rounded = 0U;
++        ++adjusted_exponent;
++        if (adjusted_exponent >= 31U)
++            return static_cast<uint16_t>(sign | 0x7C00U);
++    }
++    return static_cast<uint16_t>(
++        sign | (adjusted_exponent << 10U) | (rounded >> 13U));
++}
++
++float half_to_float(uint16_t value) {
++    const uint32_t sign =
++        static_cast<uint32_t>(value & 0x8000U) << 16U;
++    uint32_t exponent = (value >> 10U) & 0x1FU;
++    uint32_t mantissa = value & 0x3FFU;
++    uint32_t bits = 0;
++    if (exponent == 0U) {
++        if (mantissa == 0U) {
++            bits = sign;
++        } else {
++            int unbiased = -14;
++            while ((mantissa & 0x400U) == 0U) {
++                mantissa <<= 1U;
++                --unbiased;
++            }
++            mantissa &= 0x3FFU;
++            bits = sign |
++                (static_cast<uint32_t>(unbiased + 127) << 23U) |
++                (mantissa << 13U);
++        }
++    } else if (exponent == 0x1FU) {
++        bits = sign | 0x7F800000U | (mantissa << 13U);
++    } else {
++        exponent = exponent - 15U + 127U;
++        bits = sign | (exponent << 23U) | (mantissa << 13U);
++    }
++    float result = 0.0f;
++    std::memcpy(&result, &bits, sizeof(result));
++    return result;
++}
++
++uint16_t positive_f16_upper_after_f32(double value) {
++    float rounded = static_cast<float>(value);
++    rounded =
++        std::nextafter(rounded, std::numeric_limits<float>::infinity());
++    uint16_t half = float_to_half(rounded);
++    if (static_cast<double>(half_to_float(half)) <
++        static_cast<double>(rounded)) {
++        ++half;
++    }
++    return half;
++}
++
+ void append_trace(const std::string& row);
+ 
+ bool has_exact_static_contract(const kernel_impl_params& params) {
+@@ -199,6 +313,7 @@
+     kernel_selector::kernel_data data;
+     const bool gated_exact = binary_gated_exact_enabled();
+     const bool gated_q4 = binary_gated_q4_enabled();
++    const bool affine_q4 = binary_affine_q4_enabled();
+     const bool greedy_local2 = binary_greedy_local2_enabled();
+     const bool token_only = binary_token_only_enabled();
+     data.kernelName = token_only
+@@ -207,7 +322,11 @@
+         ? kBinaryGreedyCorrectionRows : kBinaryCorrectionRows;
+     OPENVINO_ASSERT(!(gated_exact && gated_q4),
+                     "IQ36 binary LM-head fallbacks are mutually exclusive");
+-    data.kernels.resize(token_only ? 6 : (gated_exact || gated_q4) ? 12 : 6);
++    OPENVINO_ASSERT(!(affine_q4 && token_only),
++                    "IQ36 affine-Q4 fallback requires full-logit output");
++    data.kernels.resize(
++        token_only ? 6 : affine_q4 ? 15 :
++        (gated_exact || gated_q4) ? 12 : 6);
+     const std::string source = R"CLC(
+ #pragma OPENCL EXTENSION cl_khr_fp16 : enable
+ #pragma OPENCL EXTENSION cl_khr_subgroups : enable
+@@ -247,6 +366,16 @@
+ #define IQ36_Q4_STRIPE_BYTES 8224U
+ #define IQ36_BINARY_GATED_Q4_CORRECTION_CAPACITY 4096U
+ #define IQ36_BINARY_GATED_Q4_CORRECTION_DELTA 8.0f
++#define IQ36_AFFINE_Q4_GROUPS 16U
++#define IQ36_AFFINE_Q4_GROUP_SIZE 128U
++#define IQ36_AFFINE_Q4_ROW_BYTES 1024U
++#define IQ36_AFFINE_Q4_CAPACITY 16812U
++#define IQ36_AFFINE_Q4_CODES_OFFSET 66053120UL
++#define IQ36_AFFINE_Q4_MINMAX_OFFSET 320332800UL
++#define IQ36_AFFINE_Q4_RESIDUAL_OFFSET 328279040UL
++#define IQ36_F32_U (0x1.0p-24f)
++#define IQ36_DOT_GAMMA \
++  ((4096.0f * IQ36_F32_U) / (1.0f - 4096.0f * IQ36_F32_U))
+ 
+ #if defined(IQ36_BINARY_QUANTIZE_KERNEL)
+ __attribute__((reqd_work_group_size(64, 1, 1)))
+@@ -730,6 +859,9 @@
+   state[0] = 0U;
+   state[1] = as_uint(maximum - IQ36_BINARY_GATED_EXACT_DELTA);
+   state[2] = 0U;
++#if defined(IQ36_BINARY_AFFINE_Q4)
++  state[3] = as_uint(maximum);
++#endif
+ }
+ #endif
+ 
+@@ -746,6 +878,207 @@
+ }
+ #endif
+ 
++#if defined(IQ36_BINARY_AFFINE_Q4_HIDDEN_NORMS_KERNEL)
++__attribute__((reqd_work_group_size(128, 1, 1)))
++__attribute__((intel_reqd_sub_group_size(16)))
++__kernel void iq36_lm_head_i8q1_affine_q4_hidden_group_norms_f16(
++    __global const half* input,
++    __global const char* q8_qs,
++    __global const float* q8_d,
++    __global const uint* state,
++    __global half* hidden_norms,
++    __global half* hidden_delta_norms) {
++  if (state[0] < IQ36_BINARY_GATED_EXACT_COUNT) return;
++  const uint q8_group = (uint)get_sub_group_id();
++  const uint lane = (uint)get_sub_group_local_id();
++  const uint begin = q8_group * 256U + lane * 8U;
++  const half dequant_scale = convert_half_rte(q8_d[q8_group]);
++  float hidden_square = 0.0f;
++  float delta_square = 0.0f;
++  for (uint offset = 0U; offset < 8U; ++offset) {
++    const uint column = begin + offset;
++    const float value = convert_float(input[column]);
++    const half dequant = convert_half(q8_qs[column]) * dequant_scale;
++    const float delta = value - convert_float(dequant);
++    hidden_square = fma(value, value, hidden_square);
++    delta_square = fma(delta, delta, delta_square);
++  }
++  const float hidden_sum = sub_group_reduce_add(hidden_square);
++  const float delta_sum = sub_group_reduce_add(delta_square);
++  if (lane == 0U) {
++    const uint group128 = q8_group * 2U;
++    hidden_norms[group128] =
++        convert_half_rtp(nextafter(sqrt(hidden_sum * 1.00002f), INFINITY));
++    hidden_delta_norms[group128] =
++        convert_half_rtp(nextafter(sqrt(delta_sum * 1.00002f), INFINITY));
++  }
++
++  hidden_square = 0.0f;
++  delta_square = 0.0f;
++  const uint second = begin + 128U;
++  for (uint offset = 0U; offset < 8U; ++offset) {
++    const uint column = second + offset;
++    const float value = convert_float(input[column]);
++    const half dequant = convert_half(q8_qs[column]) * dequant_scale;
++    const float delta = value - convert_float(dequant);
++    hidden_square = fma(value, value, hidden_square);
++    delta_square = fma(delta, delta, delta_square);
++  }
++  const float hidden_sum_second = sub_group_reduce_add(hidden_square);
++  const float delta_sum_second = sub_group_reduce_add(delta_square);
++  if (lane == 0U) {
++    const uint group128 = q8_group * 2U + 1U;
++    hidden_norms[group128] = convert_half_rtp(
++        nextafter(sqrt(hidden_sum_second * 1.00002f), INFINITY));
++    hidden_delta_norms[group128] = convert_half_rtp(
++        nextafter(sqrt(delta_sum_second * 1.00002f), INFINITY));
++  }
++}
++#endif
++
++#if defined(IQ36_BINARY_AFFINE_Q4_BOUND_SELECT_KERNEL)
++inline float iq36_affine_q4_f16_norm_upper(float square_sum) {
++  const float norm = sqrt(square_sum * 1.00002f);
++  return convert_float(convert_half_rtp(nextafter(norm, INFINITY)));
++}
++
++inline uint iq36_affine_q4_code(
++    __global const uchar* codes, ulong row_base, uint column) {
++  const uchar packed = codes[row_base + (ulong)(column >> 1U)];
++  return (column & 1U) == 0U
++      ? (uint)(packed & (uchar)15)
++      : (uint)(packed >> 4U);
++}
++
++__attribute__((reqd_work_group_size(256, 1, 1)))
++__attribute__((intel_reqd_sub_group_size(16)))
++__kernel void iq36_lm_head_i8q1_affine_q4_bound_select_f16(
++    __global const uchar* packed,
++    __global const half* weight_scales,
++    __global const char* q8_qs,
++    __global const float* q8_d,
++    __global const half* hidden_norms,
++    __global const half* hidden_delta_norms,
++    volatile __global uint* state,
++    __global int* candidate_ids,
++    __global half* output) {
++  if (state[0] < IQ36_BINARY_GATED_EXACT_COUNT) return;
++  __global const uchar* codes = packed + IQ36_AFFINE_Q4_CODES_OFFSET;
++  __global const char* group_minmax =
++      (__global const char*)(packed + IQ36_AFFINE_Q4_MINMAX_OFFSET);
++  __global const half* residual_norms =
++      (__global const half*)(packed + IQ36_AFFINE_Q4_RESIDUAL_OFFSET);
++  const uint lane = (uint)get_sub_group_local_id();
++  const uint subgroup =
++      (uint)get_group_id(0) * 16U + (uint)get_sub_group_id();
++  const uint subgroup_stride = (uint)get_num_groups(0) * 16U;
++  for (uint row = subgroup; row < IQ36_ROWS; row += subgroup_stride) {
++    const ulong code_row =
++        (ulong)row * (ulong)IQ36_AFFINE_Q4_ROW_BYTES;
++    const uint metadata_row = row * IQ36_AFFINE_Q4_GROUPS * 2U;
++    float approximate = 0.0f;
++    float residual_bound = 0.0f;
++    float round_guard = 0.0f;
++    const float row_scale = convert_float(weight_scales[row]);
++    const float abs_scale = fabs(row_scale);
++    for (uint group = 0U; group < IQ36_AFFINE_Q4_GROUPS; ++group) {
++      const uint metadata = metadata_row + group * 2U;
++      const float minimum = convert_float(group_minmax[metadata]);
++      const float maximum = convert_float(group_minmax[metadata + 1U]);
++      const float step = (maximum - minimum) * (1.0f / 15.0f);
++      const uint lane_base =
++          group * IQ36_AFFINE_Q4_GROUP_SIZE + lane * 8U;
++      float lane_dot = 0.0f;
++      float lane_codec_square = 0.0f;
++      for (uint offset = 0U; offset < 8U; ++offset) {
++        const uint column = lane_base + offset;
++        const float codec = fma(
++            convert_float(iq36_affine_q4_code(
++                codes, code_row, column)),
++            step, minimum);
++        lane_dot = fma(
++            codec, convert_float(q8_qs[column]), lane_dot);
++        lane_codec_square = fma(
++            codec, codec, lane_codec_square);
++      }
++      const float dot_sum = sub_group_reduce_add(lane_dot);
++      const float codec_square =
++          sub_group_reduce_add(lane_codec_square);
++      if (lane == 0U) {
++        const float codec_norm =
++            iq36_affine_q4_f16_norm_upper(codec_square);
++        const float hidden_norm = convert_float(hidden_norms[group]);
++        const float hidden_delta_norm =
++            convert_float(hidden_delta_norms[group]);
++        const float residual_norm = convert_float(
++            residual_norms[row * IQ36_AFFINE_Q4_GROUPS + group]);
++        approximate += dot_sum * q8_d[group >> 1U];
++        residual_bound += abs_scale * (
++            residual_norm * hidden_norm +
++            codec_norm * hidden_delta_norm);
++        const float magnitude =
++            codec_norm * hidden_norm * abs_scale;
++        round_guard += magnitude * IQ36_DOT_GAMMA +
++            fmax(magnitude, 1.0f) * (2.0f * IQ36_F32_U);
++      }
++    }
++    if (lane == 0U) {
++      const float upper_real = fma(
++          approximate, row_scale, residual_bound + round_guard);
++      const half upper = convert_half_rtp(
++          nextafter(upper_real, INFINITY));
++      output[row] = convert_half_rte(approximate * row_scale);
++      if (convert_float(upper) >= as_float(state[3])) {
++        const uint slot = atomic_inc(state + 2);
++        if (slot < IQ36_AFFINE_Q4_CAPACITY)
++          candidate_ids[slot] = (int)row;
++      }
++    }
++  }
++}
++#endif
++
++#if defined(IQ36_BINARY_AFFINE_Q4_CORRECTION_KERNEL)
++__attribute__((reqd_work_group_size(64, 1, 1)))
++__attribute__((intel_reqd_sub_group_size(16)))
++__kernel void iq36_lm_head_i8_affine_q4_exact_candidates_f16(
++    __global const char* weights,
++    __global const half* weight_scales,
++    __global const half* input,
++    __global const uint* state,
++    __global const int* candidate_ids,
++    __global half* output) {
++  if (state[0] < IQ36_BINARY_GATED_EXACT_COUNT ||
++      state[2] > IQ36_AFFINE_Q4_CAPACITY) return;
++  const uint selected = (uint)get_group_id(0);
++  const uint lane = (uint)get_local_id(0);
++  const uint count = min(state[2], (uint)IQ36_AFFINE_Q4_CAPACITY);
++  if (selected >= count) return;
++  const int signed_row = candidate_ids[selected];
++  if (signed_row < 0 || signed_row >= (int)IQ36_ROWS) return;
++  const uint row = (uint)signed_row;
++  const ulong row_base = (ulong)row * 2048UL;
++  const uint lane_base = lane * 32U;
++  float dot_sum = 0.0f;
++  for (uint chunk = 0U; chunk < 8U; ++chunk) {
++    const uint element = lane_base + chunk * 4U;
++    dot_sum += dot(
++        convert_float4(vload4(0, weights + row_base + element)),
++        convert_float4(vload4(0, input + element)));
++  }
++  __local float partial[64];
++  partial[lane] = dot_sum;
++  barrier(CLK_LOCAL_MEM_FENCE);
++  if (lane == 0U) {
++    float value = 0.0f;
++    for (uint contributor = 0U; contributor < 64U; ++contributor)
++      value += partial[contributor];
++    output[row] = convert_half_rte(
++        value * convert_float(weight_scales[row]));
++  }
++}
++#endif
++
+ #if defined(IQ36_BINARY_GATED_EXACT_MATVEC_KERNEL)
+ __attribute__((reqd_work_group_size(256, 1, 1)))
+ __attribute__((intel_reqd_sub_group_size(16)))
+@@ -756,7 +1089,12 @@
+     __global const float* q8_d,
+     __global const uint* state,
+     __global half* output) {
++#if defined(IQ36_BINARY_AFFINE_Q4_OVERFLOW)
++  if (state[0] < IQ36_BINARY_GATED_EXACT_COUNT ||
++      state[2] <= IQ36_AFFINE_Q4_CAPACITY) return;
++#else
+   if (state[0] < IQ36_BINARY_GATED_EXACT_COUNT) return;
++#endif
+   const uint subgroup_lane = (uint)get_sub_group_local_id();
+   const uint subgroup =
+       (uint)get_group_id(0) * 16U + (uint)get_sub_group_id();
+@@ -792,7 +1130,12 @@
+     __global const uint* state,
+     __global int* partial_top_ids,
+     __global float* partial_top_values) {
++#if defined(IQ36_BINARY_AFFINE_Q4_OVERFLOW)
++  if (state[0] < IQ36_BINARY_GATED_EXACT_COUNT ||
++      state[2] <= IQ36_AFFINE_Q4_CAPACITY) return;
++#else
+   if (state[0] < IQ36_BINARY_GATED_EXACT_COUNT) return;
++#endif
+   const uint lane = (uint)get_local_id(0);
+   const uint block = (uint)get_group_id(0);
+   const uint row = block * 256U + lane;
+@@ -818,7 +1161,12 @@
+     __global const uint* state,
+     __global int* top_ids,
+     __global float* top_values) {
++#if defined(IQ36_BINARY_AFFINE_Q4_OVERFLOW)
++  if (state[0] < IQ36_BINARY_GATED_EXACT_COUNT ||
++      state[2] <= IQ36_AFFINE_Q4_CAPACITY) return;
++#else
+   if (state[0] < IQ36_BINARY_GATED_EXACT_COUNT) return;
++#endif
+   const uint lane = (uint)get_local_id(0);
+   float best_values[8];
+   int best_ids[8];
+@@ -870,7 +1218,12 @@
+     __global const uint* state,
+     __global const int* top_ids,
+     __global half* output) {
++#if defined(IQ36_BINARY_AFFINE_Q4_OVERFLOW)
++  if (state[0] < IQ36_BINARY_GATED_EXACT_COUNT ||
++      state[2] <= IQ36_AFFINE_Q4_CAPACITY) return;
++#else
+   if (state[0] < IQ36_BINARY_GATED_EXACT_COUNT) return;
++#endif
+   const uint selected = (uint)get_group_id(0);
+   const uint lane = (uint)get_local_id(0);
+   if (selected >= 8U) return;
+@@ -1206,7 +1559,191 @@
+         {argument_type::OUTPUT, 0},
+     };
+ 
+-    if (gated_exact) {
++    if (affine_q4) {
++        auto& reset = data.kernels[6];
++        reset.code.kernelString =
++            std::make_shared<kernel_selector::kernel_string>();
++        reset.code.kernelString->entry_point =
++            kBinaryGatedExactResetKernelName;
++        reset.code.kernelString->str = source;
++        reset.code.kernelString->options =
++            "-cl-std=CL3.0 -D IQ36_BINARY_GATED_EXACT_RESET_KERNEL=1"
++            " -D IQ36_BINARY_AFFINE_Q4=1";
++        reset.code.kernelString->batch_compilation = false;
++        reset.params.workGroups.global = {1, 1, 1};
++        reset.params.workGroups.local = {1, 1, 1};
++        reset.params.arguments = {
++            {argument_type::OUTPUT, 0},
++            {argument_type::INTERNAL_BUFFER, 5},
++            {argument_type::INTERNAL_BUFFER, 7},
++        };
++
++        auto& gate_collect = data.kernels[7];
++        gate_collect.code.kernelString =
++            std::make_shared<kernel_selector::kernel_string>();
++        gate_collect.code.kernelString->entry_point =
++            kBinaryGatedExactCollectKernelName;
++        gate_collect.code.kernelString->str = source;
++        gate_collect.code.kernelString->options =
++            "-cl-std=CL3.0 -D IQ36_BINARY_GATED_EXACT_COLLECT_KERNEL=1";
++        gate_collect.code.kernelString->batch_compilation = false;
++        gate_collect.params.workGroups.global = {kRows, 1, 1};
++        gate_collect.params.workGroups.local = {256, 1, 1};
++        gate_collect.params.arguments = {
++            {argument_type::OUTPUT, 0},
++            {argument_type::INTERNAL_BUFFER, 7},
++        };
++
++        auto& hidden_norms = data.kernels[8];
++        hidden_norms.code.kernelString =
++            std::make_shared<kernel_selector::kernel_string>();
++        hidden_norms.code.kernelString->entry_point =
++            kBinaryAffineQ4HiddenNormsKernelName;
++        hidden_norms.code.kernelString->str = source;
++        hidden_norms.code.kernelString->options =
++            "-cl-std=CL3.0"
++            " -D IQ36_BINARY_AFFINE_Q4_HIDDEN_NORMS_KERNEL=1";
++        hidden_norms.code.kernelString->batch_compilation = false;
++        hidden_norms.params.workGroups.global = {128, 1, 1};
++        hidden_norms.params.workGroups.local = {128, 1, 1};
++        hidden_norms.params.arguments = {
++            {argument_type::INPUT, 0},
++            {argument_type::INTERNAL_BUFFER, 0},
++            {argument_type::INTERNAL_BUFFER, 1},
++            {argument_type::INTERNAL_BUFFER, 7},
++            {argument_type::INTERNAL_BUFFER, 9},
++            {argument_type::INTERNAL_BUFFER, 10},
++        };
++
++        auto& bound_select = data.kernels[9];
++        bound_select.code.kernelString =
++            std::make_shared<kernel_selector::kernel_string>();
++        bound_select.code.kernelString->entry_point =
++            kBinaryAffineQ4BoundSelectKernelName;
++        bound_select.code.kernelString->str = source;
++        bound_select.code.kernelString->options =
++            "-cl-std=CL3.0"
++            " -D IQ36_BINARY_AFFINE_Q4_BOUND_SELECT_KERNEL=1";
++        bound_select.code.kernelString->batch_compilation = false;
++        bound_select.params.workGroups.global = {
++            kBinaryGatedExactWorkgroups * 256, 1, 1};
++        bound_select.params.workGroups.local = {256, 1, 1};
++        bound_select.params.arguments = {
++            {argument_type::WEIGHTS, 0},
++            {argument_type::INPUT, 2},
++            {argument_type::INTERNAL_BUFFER, 0},
++            {argument_type::INTERNAL_BUFFER, 1},
++            {argument_type::INTERNAL_BUFFER, 9},
++            {argument_type::INTERNAL_BUFFER, 10},
++            {argument_type::INTERNAL_BUFFER, 7},
++            {argument_type::INTERNAL_BUFFER, 8},
++            {argument_type::OUTPUT, 0},
++        };
++
++        auto& candidate_correction = data.kernels[10];
++        candidate_correction.code.kernelString =
++            std::make_shared<kernel_selector::kernel_string>();
++        candidate_correction.code.kernelString->entry_point =
++            kBinaryAffineQ4CorrectionKernelName;
++        candidate_correction.code.kernelString->str = source;
++        candidate_correction.code.kernelString->options =
++            "-cl-std=CL3.0"
++            " -D IQ36_BINARY_AFFINE_Q4_CORRECTION_KERNEL=1";
++        candidate_correction.code.kernelString->batch_compilation = false;
++        candidate_correction.params.workGroups.global = {
++            kBinaryAffineQ4CorrectionCapacity * 64, 1, 1};
++        candidate_correction.params.workGroups.local = {64, 1, 1};
++        candidate_correction.params.arguments = {
++            {argument_type::INPUT, 1},
++            {argument_type::INPUT, 2},
++            {argument_type::INPUT, 0},
++            {argument_type::INTERNAL_BUFFER, 7},
++            {argument_type::INTERNAL_BUFFER, 8},
++            {argument_type::OUTPUT, 0},
++        };
++
++        auto& overflow_exact = data.kernels[11];
++        overflow_exact.code.kernelString =
++            std::make_shared<kernel_selector::kernel_string>();
++        overflow_exact.code.kernelString->entry_point =
++            kBinaryGatedExactKernelName;
++        overflow_exact.code.kernelString->str = source;
++        overflow_exact.code.kernelString->options =
++            "-cl-std=CL3.0 -D IQ36_BINARY_GATED_EXACT_MATVEC_KERNEL=1"
++            " -D IQ36_BINARY_AFFINE_Q4_OVERFLOW=1";
++        overflow_exact.code.kernelString->batch_compilation = false;
++        overflow_exact.params.workGroups.global = {
++            kBinaryGatedExactWorkgroups * 256, 1, 1};
++        overflow_exact.params.workGroups.local = {256, 1, 1};
++        overflow_exact.params.arguments = {
++            {argument_type::INPUT, 1},
++            {argument_type::INPUT, 2},
++            {argument_type::INTERNAL_BUFFER, 0},
++            {argument_type::INTERNAL_BUFFER, 1},
++            {argument_type::INTERNAL_BUFFER, 7},
++            {argument_type::OUTPUT, 0},
++        };
++
++        auto& overflow_rerank = data.kernels[12];
++        overflow_rerank.code.kernelString =
++            std::make_shared<kernel_selector::kernel_string>();
++        overflow_rerank.code.kernelString->entry_point =
++            kBinaryGatedExactOutputKernelName;
++        overflow_rerank.code.kernelString->str = source;
++        overflow_rerank.code.kernelString->options =
++            "-cl-std=CL3.0 -D IQ36_BINARY_GATED_EXACT_OUTPUT_KERNEL=1"
++            " -D IQ36_BINARY_AFFINE_Q4_OVERFLOW=1";
++        overflow_rerank.code.kernelString->batch_compilation = false;
++        overflow_rerank.params.workGroups.global = {kRows, 1, 1};
++        overflow_rerank.params.workGroups.local = {256, 1, 1};
++        overflow_rerank.params.arguments = {
++            {argument_type::OUTPUT, 0},
++            {argument_type::INTERNAL_BUFFER, 7},
++            {argument_type::INTERNAL_BUFFER, 3},
++            {argument_type::INTERNAL_BUFFER, 4},
++        };
++
++        auto& overflow_merge = data.kernels[13];
++        overflow_merge.code.kernelString =
++            std::make_shared<kernel_selector::kernel_string>();
++        overflow_merge.code.kernelString->entry_point =
++            kBinaryGatedExactMergeKernelName;
++        overflow_merge.code.kernelString->str = source;
++        overflow_merge.code.kernelString->options =
++            "-cl-std=CL3.0 -D IQ36_BINARY_GATED_EXACT_MERGE_KERNEL=1"
++            " -D IQ36_BINARY_AFFINE_Q4_OVERFLOW=1";
++        overflow_merge.code.kernelString->batch_compilation = false;
++        overflow_merge.params.workGroups.global = {256, 1, 1};
++        overflow_merge.params.workGroups.local = {256, 1, 1};
++        overflow_merge.params.arguments = {
++            {argument_type::INTERNAL_BUFFER, 3},
++            {argument_type::INTERNAL_BUFFER, 4},
++            {argument_type::INTERNAL_BUFFER, 7},
++            {argument_type::INTERNAL_BUFFER, 5},
++            {argument_type::INTERNAL_BUFFER, 6},
++        };
++
++        auto& overflow_topk = data.kernels[14];
++        overflow_topk.code.kernelString =
++            std::make_shared<kernel_selector::kernel_string>();
++        overflow_topk.code.kernelString->entry_point =
++            kBinaryGatedExactTopKKernelName;
++        overflow_topk.code.kernelString->str = source;
++        overflow_topk.code.kernelString->options =
++            "-cl-std=CL3.0 -D IQ36_BINARY_GATED_EXACT_TOPK_KERNEL=1"
++            " -D IQ36_BINARY_AFFINE_Q4_OVERFLOW=1";
++        overflow_topk.code.kernelString->batch_compilation = false;
++        overflow_topk.params.workGroups.global = {kTopK * 64, 1, 1};
++        overflow_topk.params.workGroups.local = {64, 1, 1};
++        overflow_topk.params.arguments = {
++            {argument_type::INPUT, 1},
++            {argument_type::INPUT, 2},
++            {argument_type::INPUT, 0},
++            {argument_type::INTERNAL_BUFFER, 7},
++            {argument_type::INTERNAL_BUFFER, 5},
++            {argument_type::OUTPUT, 0},
++        };
++    } else if (gated_exact) {
+         auto& reset = data.kernels[6];
+         reset.code.kernelString = std::make_shared<kernel_selector::kernel_string>();
+         reset.code.kernelString->entry_point = kBinaryGatedExactResetKernelName;
+@@ -1429,11 +1966,21 @@
+         kTopBlockCount * kTopK * sizeof(float));
+     data.internalBuffers.emplace_back(kTopK * sizeof(int32_t));
+     data.internalBuffers.emplace_back(kTopK * sizeof(float));
+-    if (gated_exact || gated_q4)
++    if (affine_q4)
++        data.internalBuffers.emplace_back(4 * sizeof(uint32_t));
++    else if (gated_exact || gated_q4)
+         data.internalBuffers.emplace_back(3 * sizeof(uint32_t));
+-    if (gated_q4)
++    if (affine_q4) {
++        data.internalBuffers.emplace_back(
++            kBinaryAffineQ4CorrectionCapacity * sizeof(int32_t));
++        data.internalBuffers.emplace_back(
++            kBinaryAffineQ4Groups * sizeof(uint16_t));
++        data.internalBuffers.emplace_back(
++            kBinaryAffineQ4Groups * sizeof(uint16_t));
++    } else if (gated_q4) {
+         data.internalBuffers.emplace_back(
+             kBinaryGatedQ4CorrectionCapacity * sizeof(int32_t));
++    }
+     data.needs_sub_kernels_sync = true;
+     return data;
+ }
+@@ -2075,6 +2622,7 @@
+     const void* engine = nullptr;
+     bool binary = false;
+     bool gated_q4 = false;
++    bool affine_q4 = false;
+     memory::ptr weights;
+ };
+ 
+@@ -2121,20 +2669,24 @@
+ 
+         const bool binary = binary_enabled();
+         const bool gated_q4 = binary_gated_q4_enabled();
++        const bool affine_q4 = binary_affine_q4_enabled();
+         const bool greedy_local2 = binary_greedy_local2_enabled();
+         const size_t binary_local_topk =
+             greedy_local2 ? kBinaryGreedyLocalTopK : kBinaryLocalTopK;
+         const size_t binary_correction_rows = greedy_local2
+             ? kBinaryGreedyCorrectionRows : kBinaryCorrectionRows;
+         const size_t packed_bytes = binary
+-            ? (gated_q4 ? kBinaryGatedQ4PackedBytes : kBinaryPackedBytes)
++            ? (affine_q4 ? kBinaryAffineQ4PackedBytes :
++               gated_q4 ? kBinaryGatedQ4PackedBytes : kBinaryPackedBytes)
+             : kPackedBytes;
+         auto& engine = instance.get_network().get_engine();
+         auto& packed_cache = process_packed_weights_cache();
+         std::lock_guard<std::mutex> packed_guard(packed_cache.mutex);
+         const bool cache_hit =
+             packed_cache.weights != nullptr && packed_cache.engine == &engine &&
+-            packed_cache.binary == binary && packed_cache.gated_q4 == gated_q4;
++            packed_cache.binary == binary &&
++            packed_cache.gated_q4 == gated_q4 &&
++            packed_cache.affine_q4 == affine_q4;
+         if (cache_hit) {
+             _packed_weights = packed_cache.weights;
+         } else {
+@@ -2186,6 +2738,77 @@
+             }
+         };
+ 
++        const auto pack_affine_q4 = [&]() {
++            OPENVINO_ASSERT(std::fesetround(FE_TONEAREST) == 0,
++                            "IQ36 affine-Q4 requires ties-to-even rounding");
++            auto* codes = target.data() + kBinaryAffineQ4CodesOffset;
++            auto* minmax = target.data() + kBinaryAffineQ4MinMaxOffset;
++            auto* residual_norms = reinterpret_cast<uint16_t*>(
++                target.data() + kBinaryAffineQ4ResidualOffset);
++            constexpr double gamma =
++                (static_cast<double>(kBinaryAffineQ4GroupSize) *
++                 0x1.0p-53) /
++                (1.0 - static_cast<double>(kBinaryAffineQ4GroupSize) *
++                 0x1.0p-53);
++            for (size_t row = 0; row < kRows; ++row) {
++                const size_t row_base = row * kColumns;
++                const size_t code_row = row * (kColumns / 2);
++                for (size_t group = 0;
++                     group < kBinaryAffineQ4Groups; ++group) {
++                    const size_t group_base =
++                        row_base + group * kBinaryAffineQ4GroupSize;
++                    int8_t minimum = source_weights.data()[group_base];
++                    int8_t maximum = minimum;
++                    for (size_t index = 1;
++                         index < kBinaryAffineQ4GroupSize; ++index) {
++                        minimum = std::min(
++                            minimum, source_weights.data()[group_base + index]);
++                        maximum = std::max(
++                            maximum, source_weights.data()[group_base + index]);
++                    }
++                    const size_t metadata =
++                        (row * kBinaryAffineQ4Groups + group) * 2;
++                    minmax[metadata] = static_cast<uint8_t>(minimum);
++                    minmax[metadata + 1] = static_cast<uint8_t>(maximum);
++                    const float step =
++                        (static_cast<float>(maximum) -
++                         static_cast<float>(minimum)) / 15.0f;
++                    double residual_square = 0.0;
++                    for (size_t index = 0;
++                         index < kBinaryAffineQ4GroupSize; ++index) {
++                        const float raw = static_cast<float>(
++                            source_weights.data()[group_base + index]);
++                        const float scaled = step == 0.0f ? 0.0f :
++                            (raw - static_cast<float>(minimum)) / step;
++                        int code = static_cast<int>(std::nearbyint(scaled));
++                        code = std::clamp(code, 0, 15);
++                        const size_t column =
++                            group * kBinaryAffineQ4GroupSize + index;
++                        const size_t destination =
++                            code_row + column / 2;
++                        if ((column & 1U) == 0U) {
++                            codes[destination] =
++                                static_cast<uint8_t>(code);
++                        } else {
++                            codes[destination] |=
++                                static_cast<uint8_t>(code << 4U);
++                        }
++                        const float codec =
++                            static_cast<float>(minimum) +
++                            static_cast<float>(code) * step;
++                        const double residual =
++                            static_cast<double>(raw) -
++                            static_cast<double>(codec);
++                        residual_square += residual * residual;
++                    }
++                    residual_norms[
++                        row * kBinaryAffineQ4Groups + group] =
++                        positive_f16_upper_after_f32(
++                            std::sqrt(residual_square * (1.0 + gamma)));
++                }
++            }
++        };
++
+         if (binary) {
+             for (size_t row_group = 0; row_group < kRows / kRowsPerStripe; ++row_group) {
+                 auto* stripe = target.data() + row_group * kBinaryStripeBytes;
+@@ -2258,7 +2881,9 @@
+                     }
+                 }
+             }
+-            if (gated_q4)
++            if (affine_q4)
++                pack_affine_q4();
++            else if (gated_q4)
+                 pack_q4(target.data() + kBinaryGatedQ4PackedOffset);
+         } else {
+             pack_q4(target.data());
+@@ -2267,6 +2892,7 @@
+         packed_cache.engine = &engine;
+         packed_cache.binary = binary;
+         packed_cache.gated_q4 = gated_q4;
++        packed_cache.affine_q4 = affine_q4;
+         packed_cache.weights = _packed_weights;
+         }
+ 
+@@ -2282,7 +2908,10 @@
+                      ",\"process_cache_hit\":" + (cache_hit ? "true" : "false") +
+                      ",\"codec\":\"" +
+                          (binary
+-                              ? (gated_q4
++                              ? (affine_q4
++                                     ? "binary_two_centroid_lloyd5+"
++                                       "gated_affine_q4_group128"
++                                 : gated_q4
+                                      ? "binary_two_centroid_lloyd5+gated_signed_q4"
+                                      : "binary_two_centroid_lloyd5")
+                               : "signed_q4") + "\"" +
+@@ -2293,14 +2922,17 @@
+                      ",\"direct_correction_topk\":" + std::to_string(kTopK) +
+                      ",\"adaptive_correction_delta\":" +
+                          std::to_string(
++                             affine_q4 ? 0 :
+                              gated_q4 ? kBinaryGatedQ4CorrectionDelta
+                                       : binary ? 0 : kAdaptiveCorrectionDelta) +
+                      ",\"adaptive_correction_capacity\":" +
+                          std::to_string(
++                             affine_q4 ? kBinaryAffineQ4CorrectionCapacity :
+                              gated_q4 ? kBinaryGatedQ4CorrectionCapacity
+                                       : binary ? 0 : kAdaptiveCorrectionCapacity) +
+                      ",\"exact_correction_passes\":" +
+-                         std::to_string(gated_q4 ? 4 : binary ? 2 : 3) +
++                         std::to_string(
++                             affine_q4 ? 3 : gated_q4 ? 4 : binary ? 2 : 3) +
+                      ",\"correction_reuses_source_weights\":true" +
+                      ",\"source_weight_format\":\"" + weights_layout.format.to_string() +
+                      "\",\"source_scale_format\":\"" + scales_layout.format.to_string() + "\"}");
+@@ -2380,6 +3012,7 @@
+     const bool binary = binary_enabled();
+     const bool gated_exact = binary_gated_exact_enabled();
+     const bool gated_q4 = binary_gated_q4_enabled();
++    const bool affine_q4 = binary_affine_q4_enabled();
+     const bool greedy_local2 = binary_greedy_local2_enabled();
+     const bool token_only = binary_token_only_enabled();
+     const size_t binary_local_topk =
+@@ -2398,6 +3031,7 @@
+                  ",\"columns\":" + std::to_string(kColumns) +
+                  ",\"packed_bytes\":" +
+                      std::to_string(
++                         affine_q4 ? kBinaryAffineQ4PackedBytes :
+                          gated_q4 ? kBinaryGatedQ4PackedBytes
+                                   : binary ? kBinaryPackedBytes : kPackedBytes) +
+                  ",\"topk\":" +
+@@ -2419,7 +3053,17 @@
+                             : std::string("+") + kOutputSelectKernelName + "+" +
+                                 kMergeKernelName + "+" +
+                                 kDirectCorrectionKernelName) +
+-                        (gated_exact ?
++                        (affine_q4 ?
++                            std::string("+") + kBinaryGatedExactResetKernelName + "+" +
++                                kBinaryGatedExactCollectKernelName + "+" +
++                                kBinaryAffineQ4HiddenNormsKernelName + "+" +
++                                kBinaryAffineQ4BoundSelectKernelName + "+" +
++                                kBinaryAffineQ4CorrectionKernelName + "+" +
++                                kBinaryGatedExactKernelName + "+" +
++                                kBinaryGatedExactOutputKernelName + "+" +
++                                kBinaryGatedExactMergeKernelName + "+" +
++                                kBinaryGatedExactTopKKernelName :
++                         gated_exact ?
+                             std::string("+") + kBinaryGatedExactResetKernelName + "+" +
+                                 kBinaryGatedExactCollectKernelName + "+" +
+                                 kBinaryGatedExactKernelName + "+" +
+@@ -2443,14 +3087,17 @@
+                  "\",\"direct_correction_topk\":" + std::to_string(kTopK) +
+                  ",\"adaptive_correction_delta\":" +
+                      std::to_string(
++                         affine_q4 ? 0 :
+                          gated_q4 ? kBinaryGatedQ4CorrectionDelta
+                                   : binary ? 0 : kAdaptiveCorrectionDelta) +
+                  ",\"adaptive_correction_capacity\":" +
+                      std::to_string(
++                         affine_q4 ? kBinaryAffineQ4CorrectionCapacity :
+                          gated_q4 ? kBinaryGatedQ4CorrectionCapacity
+                                   : binary ? 0 : kAdaptiveCorrectionCapacity) +
+                  ",\"correction_passes\":" +
+-                     std::to_string(gated_q4 ? 4 : binary ? 2 : 3) +
++                     std::to_string(
++                         affine_q4 ? 3 : gated_q4 ? 4 : binary ? 2 : 3) +
+                  ",\"global\":[248320,1,1],\"local\":[256,1,1]}");
+     return std::make_unique<IQ36LMHeadI8Q4Impl>(data);
+ }

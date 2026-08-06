@@ -1,0 +1,156 @@
+diff --git a/src/plugins/intel_gpu/src/graph/impls/ocl_v2/gated_delta_net_ref.cl b/src/plugins/intel_gpu/src/graph/impls/ocl_v2/gated_delta_net_ref.cl
+index 64956b99..9e25de91 100644
+--- a/src/plugins/intel_gpu/src/graph/impls/ocl_v2/gated_delta_net_ref.cl
++++ b/src/plugins/intel_gpu/src/graph/impls/ocl_v2/gated_delta_net_ref.cl
+@@ -26,13 +26,18 @@ inline void FUNC(prepare_qk)(__global INPUT0_TYPE* q, __global INPUT1_TYPE* k, i
+     float k_sum = 0.0f;
+ #        pragma unroll
+     for (int c = 0; c < K_CHUNKS; c++) {
++#        if TRANSPOSED_STATE_LAYOUT
++        float8 lane_k = convert_float8(BLOCK_READN(
++            INPUT1_TYPE, 8, k, k_offset + c * 8 * SUBGROUP_SIZE));
++#        else
+         float8 lane_k = (float8)(0.0f);
+ #        pragma unroll
+         for (int j = 0; j < 8; j++) {
+             int k_idx = lane_k_base + c * 8 + j;
+             lane_k[j] = convert_float(k[k_offset + k_idx]);
+-            k_sum += lane_k[j] * lane_k[j];
+         }
++#        endif
++        k_sum += FUNC(sum8)(lane_k * lane_k);
+         b_k[c] = lane_k;
+     }
+     float k_scale = FUNC(l2norm_scale)(k_sum, 1.0f, K_L2_NORM_EPS);
+@@ -42,13 +47,18 @@ inline void FUNC(prepare_qk)(__global INPUT0_TYPE* q, __global INPUT1_TYPE* k, i
+     float q_sum = 0.0f;
+ #        pragma unroll
+     for (int c = 0; c < K_CHUNKS; c++) {
++#        if TRANSPOSED_STATE_LAYOUT
++        float8 lane_q = convert_float8(BLOCK_READN(
++            INPUT0_TYPE, 8, q, q_offset + c * 8 * SUBGROUP_SIZE));
++#        else
+         float8 lane_q = (float8)(0.0f);
+ #        pragma unroll
+         for (int j = 0; j < 8; j++) {
+             int q_idx = lane_k_base + c * 8 + j;
+             lane_q[j] = convert_float(q[q_offset + q_idx]);
+-            q_sum += lane_q[j] * lane_q[j];
+         }
++#        endif
++        q_sum += FUNC(sum8)(lane_q * lane_q);
+         b_q[c] = lane_q;
+     }
+     float q_scale = FUNC(l2norm_scale)(q_sum, SCALE_FACTOR, Q_L2_NORM_EPS);
+@@ -57,6 +67,12 @@ inline void FUNC(prepare_qk)(__global INPUT0_TYPE* q, __global INPUT1_TYPE* k, i
+ #    else
+ #        pragma unroll
+     for (int c = 0; c < K_CHUNKS; c++) {
++#        if TRANSPOSED_STATE_LAYOUT
++        float8 lane_k = convert_float8(BLOCK_READN(
++            INPUT1_TYPE, 8, k, k_offset + c * 8 * SUBGROUP_SIZE));
++        float8 lane_q = convert_float8(BLOCK_READN(
++            INPUT0_TYPE, 8, q, q_offset + c * 8 * SUBGROUP_SIZE));
++#        else
+         float8 lane_k = (float8)(0.0f);
+         float8 lane_q = (float8)(0.0f);
+ #        pragma unroll
+@@ -65,8 +81,9 @@ inline void FUNC(prepare_qk)(__global INPUT0_TYPE* q, __global INPUT1_TYPE* k, i
+             lane_k[j] = convert_float(k[k_offset + idx]);
+             lane_q[j] = convert_float(q[q_offset + idx]) * SCALE_FACTOR;
+         }
++#        endif
+         b_k[c] = lane_k;
+-        b_q[c] = lane_q;
++        b_q[c] = lane_q * (TRANSPOSED_STATE_LAYOUT ? SCALE_FACTOR : 1.0f);
+     }
+ #    endif
+ }
+@@ -144,12 +161,18 @@ KERNEL(gated_delta_net_ref)
+ #    pragma unroll
+         for (int v_idx = 0; v_idx < V_BLOCK_SIZE; v_idx++) {
+             int curr_iv = start_iv + v_idx;
++#    if TRANSPOSED_STATE_LAYOUT
++            float8 lane_state = convert_float8(BLOCK_READN(
++                INPUT3_TYPE, 8, initial_state,
++                STATE_BASE + curr_iv * K_len + row_chunk * 8 * SUBGROUP_SIZE));
++#    else
+             float8 lane_state = (float8)(0.0f);
+ #    pragma unroll
+             for (int j = 0; j < 8; j++) {
+                 int row_idx = lid * (K_HEAD_DIM / SUBGROUP_SIZE) + row_chunk * 8 + j;
+                 lane_state[j] = convert_float(initial_state[STATE_BASE + row_idx * V_len + curr_iv]);
+             }
++#    endif
+             h_state[v_idx][row_chunk] = lane_state;
+         }
+     }
+@@ -296,6 +319,19 @@ KERNEL(gated_delta_net_ref)
+ #    pragma unroll
+         for (int v_idx = 0; v_idx < V_BLOCK_SIZE; v_idx++) {
+             int curr_iv = start_iv + v_idx;
++#    if TRANSPOSED_STATE_LAYOUT
++#        if OUTPUT_STATE
++            BLOCK_WRITEN(
++                OUTPUT1_TYPE, 8, output_state,
++                STATE_BASE + curr_iv * K_len + row_chunk * 8 * SUBGROUP_SIZE,
++                h_state[v_idx][row_chunk]);
++#        else
++            BLOCK_WRITEN(
++                INPUT3_TYPE, 8, initial_state,
++                STATE_BASE + curr_iv * K_len + row_chunk * 8 * SUBGROUP_SIZE,
++                h_state[v_idx][row_chunk]);
++#        endif
++#    else
+ #    pragma unroll
+             for (int j = 0; j < 8; j++) {
+                 int row_idx = lid * (K_HEAD_DIM / SUBGROUP_SIZE) + row_chunk * 8 + j;
+@@ -305,6 +341,7 @@ KERNEL(gated_delta_net_ref)
+                 initial_state[STATE_BASE + row_idx * V_len + curr_iv] = (INPUT3_TYPE)(h_state[v_idx][row_chunk][j]);
+ #    endif
+             }
++#    endif
+         }
+     }
+ #else
+@@ -323,4 +360,4 @@ KERNEL(gated_delta_net_ref)
+         }
+     }
+ #endif
+-}
+\ No newline at end of file
++}
+diff --git a/src/plugins/intel_gpu/src/graph/impls/ocl_v2/gated_delta_net_ref.cpp b/src/plugins/intel_gpu/src/graph/impls/ocl_v2/gated_delta_net_ref.cpp
+index 237039c4..570da0b4 100644
+--- a/src/plugins/intel_gpu/src/graph/impls/ocl_v2/gated_delta_net_ref.cpp
++++ b/src/plugins/intel_gpu/src/graph/impls/ocl_v2/gated_delta_net_ref.cpp
+@@ -8,6 +8,9 @@
+ #include "primitive_ocl_base.hpp"
+ #include "utils/kernel_generator.hpp"
+ 
++#include <cstdlib>
++#include <cstring>
++
+ namespace ov::intel_gpu::ocl {
+ namespace {
+ 
+@@ -45,6 +48,11 @@ protected:
+         const size_t v_head_dims = v_shape[3].get_length();
+         const float scale_factor = 1.0f / std::sqrt(static_cast<float>(k_head_dims));
+         const auto output_state = params.output_layouts.size() > 1 ? 1 : 0;
++        const auto* transposed_state_env = std::getenv("IQ36_GDN_TRANSPOSED_STATE");
++        const bool transposed_state_layout =
++            transposed_state_env != nullptr && std::strcmp(transposed_state_env, "1") == 0 &&
++            k_head_dims == 128 && v_head_dims == 128 &&
++            params.get_input_layout(3).data_type == data_types::f32;
+ 
+         jit.make("K_HEAD_NUM", q_head_nums);
+         jit.make("V_HEAD_NUM", v_head_nums);
+@@ -57,6 +65,7 @@ protected:
+         jit.make("K_L2_NORM_EPS", desc->k_l2_norm_eps);
+         jit.make("SCALE_FACTOR", scale_factor);
+         jit.make("OUTPUT_STATE", output_state);
++        jit.make("TRANSPOSED_STATE_LAYOUT", transposed_state_layout ? 1 : 0);
+ 
+         return jit;
+     }

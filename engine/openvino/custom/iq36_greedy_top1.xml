@@ -1,0 +1,32 @@
+<CustomLayer name="IQ36Identity" type="SimpleGPU" version="1">
+  <Kernel entry="iq36_identity">
+    <Source filename="iq36_identity.cl"/>
+  </Kernel>
+  <Buffers>
+    <Tensor arg-index="0" type="input" port-index="0" format="BFYX"/>
+    <Tensor arg-index="1" type="output" port-index="0" format="BFYX"/>
+  </Buffers>
+  <WorkSizes global="X,Y,B*F"/>
+</CustomLayer>
+<CustomLayer name="IQ36GreedyTop1Partials" type="SimpleGPU" version="1">
+  <Kernel entry="iq36_greedy_top1_partials">
+    <Source filename="iq36_greedy_top1.cl"/>
+  </Kernel>
+  <Buffers>
+    <Tensor arg-index="0" type="input" port-index="0" format="BFYX"/>
+    <Tensor arg-index="1" type="output" port-index="0" format="BFYX"/>
+  </Buffers>
+  <CompilerOptions options="-cl-std=CL2.0"/>
+  <WorkSizes global="256*X,1,1" local="256,1,1"/>
+</CustomLayer>
+<CustomLayer name="IQ36GreedyTop1Merge" type="SimpleGPU" version="1">
+  <Kernel entry="iq36_greedy_top1_merge">
+    <Source filename="iq36_greedy_top1_merge.cl"/>
+  </Kernel>
+  <Buffers>
+    <Tensor arg-index="0" type="input" port-index="0" format="BFYX"/>
+    <Tensor arg-index="1" type="output" port-index="0" format="BFYX"/>
+  </Buffers>
+  <CompilerOptions options="-cl-std=CL2.0"/>
+  <WorkSizes global="64,1,1" local="64,1,1"/>
+</CustomLayer>

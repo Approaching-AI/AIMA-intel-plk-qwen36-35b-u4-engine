@@ -1,0 +1,13 @@
+<CustomLayer name="IQ36FullAttentionGQA" type="SimpleGPU" version="1">
+  <Kernel entry="iq36_full_attention_gqa">
+    <Source filename="iq36_full_attention_gqa.cl"/>
+  </Kernel>
+  <Buffers>
+    <Tensor arg-index="0" type="input" port-index="0" format="BFYX"/>
+    <Tensor arg-index="1" type="input" port-index="1" format="BFYX"/>
+    <Tensor arg-index="2" type="input" port-index="2" format="BFYX"/>
+    <Tensor arg-index="3" type="input" port-index="3" format="BFYX"/>
+    <Tensor arg-index="4" type="output" port-index="0" format="BFYX"/>
+  </Buffers>
+  <WorkSizes global="X,Y,B*F" local="256,1,1"/>
+</CustomLayer>

@@ -1,0 +1,24 @@
+{
+  "policy_version": "1.0",
+  "selected_at": "2026-08-06",
+  "repository": {
+    "license": "Apache-2.0",
+    "personal_upstream": "https://github.com/skyguan92/AIMA-intel-plk-qwen36-35b-u4-engine",
+    "canonical_public_fork": "https://github.com/Approaching-AI/AIMA-intel-plk-qwen36-35b-u4-engine"
+  },
+  "model_distribution": {
+    "policy": "external_exact_hash_prerequisite",
+    "model_bytes_in_source_repository": false,
+    "model_bytes_in_python_distribution": false,
+    "model_redistribution_authorized_by_this_repository": false,
+    "operator_supplies_model_separately": true,
+    "startup_requires_exact_locked_file_hashes": true,
+    "reconstructed_or_replacement_model_requires_full_product_revalidation": true
+  },
+  "binary_distribution": {
+    "model_included": false,
+    "custom_openvino_plugins_require_source_recipe_and_notices": true,
+    "python_runtime_requires_exact_wheel_manifest": true,
+    "release_assets_require_sha256_manifests": true
+  }
+}

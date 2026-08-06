@@ -1,0 +1,12 @@
+<CustomLayer name="IQ36MultiOutputProbe" type="SimpleGPU" version="1">
+  <Kernel entry="iq36_multi_output_probe">
+    <Source filename="iq36_multi_output_probe.cl"/>
+  </Kernel>
+  <Buffers>
+    <Tensor arg-index="0" type="input" port-index="0" format="BFYX"/>
+    <Tensor arg-index="1" type="input" port-index="1" format="BFYX"/>
+    <Tensor arg-index="2" type="output" port-index="0" format="BFYX"/>
+    <Tensor arg-index="3" type="output" port-index="1" format="BFYX"/>
+  </Buffers>
+  <WorkSizes global="x" local="1"/>
+</CustomLayer>

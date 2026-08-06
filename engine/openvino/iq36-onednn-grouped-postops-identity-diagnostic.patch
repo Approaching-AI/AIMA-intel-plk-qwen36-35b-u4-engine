@@ -1,0 +1,16 @@
+diff --git a/src/gpu/intel/matmul/grouped_post_ops_gen.cpp b/src/gpu/intel/matmul/grouped_post_ops_gen.cpp
+index 777f48a65d..7d3289488a 100644
+--- a/src/gpu/intel/matmul/grouped_post_ops_gen.cpp
++++ b/src/gpu/intel/matmul/grouped_post_ops_gen.cpp
+@@ -160,10 +160,6 @@ std::string generate_post_ops_microgemm_header(
+             os << "    tile_convert(eltwise_f16_boundary_" << i
+                << ", (*c_tile), convert_float);\n";
+-            os << "#define eltwise_apply_" << i << "(v) (("
+-               << to_ocl_float(e.eltwise.scale)
+-               << ") * ((v) / (1.0f + native_exp(-("
+-               << to_ocl_float(e.eltwise.alpha)
+-               << ") * (v)))))\n";
++            os << "#define eltwise_apply_" << i << "(v) (v)\n";
+             os << "    tile_elementwise_s((*c_tile), eltwise_apply_" << i
+                << ");\n";
+             os << "#undef eltwise_apply_" << i << "\n";

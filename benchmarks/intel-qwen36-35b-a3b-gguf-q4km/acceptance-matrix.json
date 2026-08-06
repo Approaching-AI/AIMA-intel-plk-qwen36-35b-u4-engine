@@ -1,0 +1,426 @@
+{
+  "contract_version": "0.8",
+  "manifest_path": "benchmarks/intel-qwen36-35b-a3b-gguf-q4km/acceptance-matrix.json",
+  "workstream": "intel-qwen36-35b-a3b-gguf-q4km",
+  "model": {
+    "path": "/home/intel/Qwen3.6-35B-A3B-ov",
+    "sha256": "46140b595760e891d9626c5bfaffc2c998cce176d0de7f6c290af5ae1f2393a4",
+    "sha256_scope": "openvino_language_model.bin",
+    "format": "OpenVINO IR with U4 compressed constants",
+    "batch_size": 1
+  },
+  "target_contract": {
+    "manifest_path": "contracts/intel-qwen36-target-contract.json",
+    "required_manifest_fields": [
+      "host_alias",
+      "static_hostname",
+      "machine_label",
+      "cpu_model",
+      "opencl_platform",
+      "opencl_device"
+    ]
+  },
+  "model_contract": {
+    "manifest_path": "contracts/qwen36-35b-a3b-openvino-u4-model-contract.json",
+    "legacy_gguf_manifest_path": "contracts/qwen36-35b-a3b-gguf-q4km-model-contract.json"
+  },
+  "matrix": {
+    "input_buckets": [
+      2048,
+      4096,
+      8192,
+      16384,
+      32768,
+      65536,
+      131072
+    ],
+    "output_tokens": [
+      512
+    ],
+    "cache_mode": "cold_no_prefix",
+    "prefill_chunking_policy": {
+      "bucket_length_means_complete_logical_prompt": true,
+      "resident_chunks_allowed": true,
+      "same_infer_request_required": true,
+      "continuous_positions_and_masks_required": true,
+      "cross_request_state_import_or_reuse_forbidden": true,
+      "schedule_frozen_and_recorded_per_bucket": true,
+      "prefill_and_ttft_include_all_chunks": true,
+      "peak_memory_and_no_oom_cover_full_request_lifetime": true
+    },
+    "decode_warmup_tokens_excluded_from_jitter": 16
+  },
+  "diagnostic_scope": {
+    "input_buckets_not_in_core": [
+      1024,
+      102400,
+      262144
+    ],
+    "output_token_counts_not_in_core": [
+      1024
+    ],
+    "historical_evidence_retained": true,
+    "promotion_gating": false,
+    "reason": "ADR 0051 makes 2k/4k/8k/16k/32k/64k/128k input with exactly 512 output tokens the sole product matrix; excluded lanes remain useful diagnostics"
+  },
+  "r0_target_policy": {
+    "refresh_required_before_product_claim": true,
+    "same_host_floor_required": false,
+    "same_host_openvino_required": true,
+    "minimum_openvino_speedup_ratio": 1.1,
+    "minimum_openvino_speedup_ratio_applies_to_buckets": [
+      32768,
+      65536,
+      131072
+    ],
+    "regression_guard_minimum_ratio": 0.98,
+    "regression_guard_buckets": [
+      2048,
+      4096,
+      8192,
+      16384
+    ],
+    "stretch_openvino_speedup_ratio": 1.125,
+    "both_prefill_and_decode_required": true,
+    "route_rejection_satisfies_goal": false,
+    "roofline_default_target_ratio": 0.7,
+    "bootstrap_target_basis": "ADR 0075 requires at least 1.10x the locked absolute floor and same-run stock OpenVINO ratio in both phases of the 32k/64k/128k priority rows; 2k/4k/8k/16k remain exact output512 non-inferiority guards with paired lower bound at least 0.98x; ADR 0070 permits a candidate OpenVINO GPU specialization but keeps the stock worker immutable and isolated",
+    "r0_pending_buckets": [],
+    "r0_unavailable_denominator_buckets": [],
+    "historical_unavailable_denominator_buckets": [
+      262144
+    ],
+    "r0_unavailable_policy_path": "output/r0-denominator-unavailable-policy-20260626T071453Z/policy.json",
+    "r0_prompt_edge_policy_path": "output/r0-oracle-256k-prompt-edge-policy-20260626T145727Z/policy.json"
+  },
+  "openvino_q4_denominator": {
+    "role": "immutable_stock_correctness_reference_and_performance_denominator",
+    "runtime": "stock OpenVINO GenAI GPU",
+    "model_path": "/home/intel/Qwen3.6-35B-A3B-ov",
+    "language_model_xml_sha256": "fae1047f6a758ded4fab95f5faee9bf68f92b4433d778496bd9d44efa51cdbb0",
+    "language_model_bin_sha256": "46140b595760e891d9626c5bfaffc2c998cce176d0de7f6c290af5ae1f2393a4",
+    "language_model_bytes": 18646205498,
+    "weight_format": "U4 compressed constants in OpenVINO IR",
+    "device": "Intel(R) Arc(TM) B390 GPU",
+    "comparison_protocol": {
+      "batch_size": 1,
+      "cache_mode": "cold_no_prefix",
+      "prefix_caching": false,
+      "apply_chat_template": false,
+      "model_resident": true,
+      "warmup_generations": 1,
+      "measured_generations_min": 3,
+      "prompts_per_bucket_min": 3,
+      "same_host_and_power_state_required": true,
+      "fresh_isolated_worker_required": true,
+      "candidate_custom_config_forbidden": true,
+      "candidate_plugin_cache_sharing_forbidden": true,
+      "effective_plugin_properties_capture_required": true,
+      "statistic": "median per bucket and phase",
+      "product_candidate_schedule": "interleaved ABBA candidate/stock-OpenVINO blocks",
+      "product_candidate_paired_blocks_min": 8,
+      "product_candidate_decision": "one-sided 95% lower confidence bound of paired candidate/stock-OpenVINO median throughput ratio against the bucket role: 1.10 priority win or 0.98 non-inferiority guard"
+    },
+    "target_calibration_512": {
+      "status": "raw_prompt_refresh_complete",
+      "input_buckets": [
+        2048,
+        4096,
+        8192,
+        16384,
+        32768,
+        65536,
+        131072
+      ],
+      "prompt_sets": [
+        "prefill_shape",
+        "sentinel",
+        "filler"
+      ],
+      "measured_rows_per_prompt": 3,
+      "warmup_rows_per_prompt": 1,
+      "fixed_output_tokens": 512,
+      "exact_input_token_count_required": true,
+      "ignore_eos_for_fixed_length_lane": true,
+      "raw_prompt_sets_complete": [
+        "prefill_shape",
+        "sentinel",
+        "filler"
+      ],
+      "raw_prompt_anchor_prompt_sets": [
+        "prefill_shape",
+        "sentinel"
+      ],
+      "raw_prompt_anchor_buckets": [
+        8192
+      ],
+      "historical_raw_prompt_anchor_buckets": [
+        1024,
+        8192
+      ],
+      "remaining_raw_prompt_buckets_by_prompt_set": {
+        "prefill_shape": [],
+        "sentinel": []
+      },
+      "remaining_product_denominator_output_lanes": []
+    },
+    "best_observed_tokens_s": {
+      "prefill": {
+        "2048": 2206.400689,
+        "4096": 2347.301582,
+        "8192": 2281.314227850277,
+        "16384": 1987.589366,
+        "32768": 1607.0,
+        "65536": 1197.0,
+        "131072": 807.99
+      },
+      "decode": {
+        "2048": 44.226425,
+        "4096": 44.02436065673828,
+        "8192": 42.35869216918945,
+        "16384": 39.032554626464844,
+        "32768": 33.773312,
+        "65536": 26.61721420288086,
+        "131072": 18.806147
+      }
+    },
+    "evidence": {
+      "fresh_1024": "output/r0-openvino-denominator-20260710Tgoalrefresh-1k-r3Z/",
+      "fresh_8192": "output/r0-openvino-denominator-20260710Tgoalrefresh-8k-r3Z/",
+      "fresh_32758_diagnostic": "output/r0-openvino-denominator-20260710Tgoalrefresh-32k-r1Z/",
+      "legacy_chat_templated_512_anchor_prefill_sentinel": "output/r0-openvino-denominator-matrix-20260711Tanchors-bothZ/",
+      "legacy_chat_templated_512_anchor_filler": "output/r0-openvino-denominator-matrix-20260711Tanchors-fillerZ/",
+      "legacy_chat_templated_512_prefill_short": "output/r0-openvino-denominator-matrix-20260711TshortZ/",
+      "legacy_chat_templated_512_sentinel_short": "output/r0-openvino-denominator-matrix-20260711Tsentinel-shortZ/",
+      "legacy_chat_templated_512_filler_short": "output/r0-openvino-denominator-matrix-20260711Tfiller-shortZ/",
+      "legacy_chat_templated_512_prefill_long": "output/r0-openvino-denominator-matrix-20260711TlongZ/",
+      "legacy_chat_templated_512_sentinel_long_eos_diagnostic": "output/r0-openvino-denominator-matrix-20260711Tsentinel-longZ/",
+      "legacy_chat_templated_512_sentinel_128k_fixed": "output/r0-openvino-denominator-matrix-20260711Tsentinel-128k-ignore-eosZ/",
+      "legacy_chat_templated_512_filler_long": "output/r0-openvino-denominator-matrix-20260711Tfiller-longZ/",
+      "raw_512_anchor_prefill_sentinel": "output/r0-openvino-denominator-matrix-20260711Tseq724-raw-both-cleanZ/",
+      "raw_512_anchor_filler": "output/r0-openvino-denominator-matrix-20260711Tseq725-raw-filler-cleanZ/",
+      "raw_512_filler_remaining_buckets": "output/r0-openvino-denominator-matrix-20260711Tseq726-raw-filler-rest-cleanZ/",
+      "raw_512_core_remaining_prefill_sentinel": "output/r0-openvino-denominator-matrix-20260713Tseq769-raw-core-rest-cleanZ/",
+      "derivation": "doc/reference/intel-qwen36-35b-a3b-gguf-q4km/performance-target-2026-07-13.md"
+    },
+    "diagnostic_unavailable_buckets": {
+      "262144": "OpenVINO GPU CL_OUT_OF_RESOURCES after parsing the prompt"
+    }
+  },
+  "candidate_runtime": {
+    "decision": "doc/adr/0070-adopt-openvino-u4-specialization-runtime.md",
+    "roadmap": "doc/active/intel-qwen36-35b-a3b-gguf-q4km/intel-qwen36-35b-a3b-gguf-q4km-openvino-specialization-roadmap-2026-07-13.md",
+    "final_runtime_dependency": "OpenVINO GPU plus candidate-specific custom OpenCL GPU operations",
+    "same_locked_model_and_release_base_as_stock_required": true,
+    "locked_model_directory_mutation_allowed": false,
+    "custom_gpu_operations_allowed": true,
+    "derived_static_bucket_graphs_allowed": true,
+    "state_precision_or_layout_changes_allowed_under_correctness_gate": true,
+    "baseline_configuration_leakage_allowed": false,
+    "legacy_gguf_correctness_is_promotion_gating": false,
+    "bootstrap": {
+      "stage": "OV0",
+      "status": "passed_clean_baseline_oracle_and_noop_custom_op_bundle",
+      "evidence": "output/openvino-specialization-bootstrap-20260713Tov0contractZ/",
+      "analysis_commit": "7d375ba6aaf58335974455431ccd9a6c74118c2a",
+      "worker_commit": "696db7798ea7f479aebefb07bbb102310a9f629b",
+      "optimization_source_allowed": true,
+      "speedup_claims_allowed": false,
+      "required_before_optimization_promotion": [
+        "locked IR and tokenizer digest verification",
+        "isolated stock worker effective-property and state-schema capture",
+        "stock OpenVINO teacher-forced and deterministic-token bundle",
+        "candidate no-op custom GPU substitution correctness",
+        "proof that candidate configuration cannot affect stock worker"
+      ]
+    },
+    "first_prefill_route": {
+      "id": "openvino_gated_delta_transpose_fusion",
+      "component_oracle": {
+        "stage": "OV1_gate_1a",
+        "status": "passed_clean_real_layer0_seq1024_boundary",
+        "evidence": "output/openvino-gdn-boundary-20260713Tseq802cleanZ/",
+        "commit": "af74a8f0ac9dae7a25ddba9b6765a7b00b869ddf",
+        "speedup_claims_allowed": false
+      },
+      "stock_profiled_transpose_plus_gated_delta_ms_per_1024": 149.931,
+      "historical_8k_stretch_cut_ms_per_1024": 40.896,
+      "priority_end_to_end_cut_ms_per_1024": {
+        "32768": 58.027,
+        "65536": 77.947,
+        "131072": 115.486
+      },
+      "must_combine_with_context_attention_cut": true,
+      "component_profile_is_product_evidence": false
+    }
+  },
+  "bootstrap_targets": {
+    "role": "priority_minimum_and_full_matrix_stretch_reference",
+    "promotion_gating_buckets": [
+      32768,
+      65536,
+      131072
+    ],
+    "short_bucket_values_are_stretch_references": true,
+    "prefill_tokens_s": {
+      "2048": 2428.0,
+      "4096": 2583.0,
+      "8192": 2510.0,
+      "16384": 2187.0,
+      "32768": 1768.0,
+      "65536": 1317.0,
+      "131072": 889.0
+    },
+    "decode_tokens_s": {
+      "2048": 48.65,
+      "4096": 48.43,
+      "8192": 46.6,
+      "16384": 42.94,
+      "32768": 37.16,
+      "65536": 29.28,
+      "131072": 20.69
+    }
+  },
+  "performance_promotion": {
+    "threshold_formula": "priority 32k/64k/128k: max(absolute_bucket_target, 1.10 * same-run stock OpenVINO median); guard 2k/4k/8k/16k: paired lower confidence bound >= 0.98 * same-run stock OpenVINO",
+    "comparison_is_per_bucket_and_per_phase": true,
+    "all_input_and_output_lanes_must_pass": true,
+    "all_input_and_output_lanes_must_pass_assigned_role": true,
+    "phase_or_bucket_averaging_allowed": false,
+    "route_selection_priority_input_buckets": [
+      32768,
+      65536,
+      131072
+    ],
+    "regression_guard_input_buckets": [
+      2048,
+      4096,
+      8192,
+      16384
+    ],
+    "confirm_run_required": true,
+    "inference": {
+      "decision_statistic": "one-sided 95% confidence bound",
+      "confidence": 0.95,
+      "bootstrap_method": "deterministic percentile bootstrap of the median",
+      "bootstrap_resamples": 20000,
+      "product_schedule": "interleaved ABBA blocks on the same host and power state",
+      "product_minimum_paired_blocks": 8,
+      "product_pass_rule": "lower confidence bound of paired candidate/stock-OpenVINO throughput ratio >= 1.10 for each priority phase and >= 0.98 for each regression-guard phase",
+      "component_minimum_samples": 20,
+      "component_pass_rule": "upper confidence bound of component latency <= registered component cap",
+      "repeat_confirm_median_spread_is_promotion_gate": false,
+      "dispersion_diagnostic": {
+        "metric": "1.4826 * MAD / median",
+        "normal_max": 0.01,
+        "warning_max": 0.02,
+        "above_normal_action": "collect more samples",
+        "above_warning_action": "inspect power, thermal, frequency, driver scheduling, and background-load telemetry before rerun",
+        "promotion_gate": false
+      }
+    },
+    "route_rejection_completes_project_goal": false
+  },
+  "same_host_floor": {
+    "role": "legacy_llama_cpp_diagnostic_not_product_denominator",
+    "status": "refreshed_2k_8k_512_separate_with_1k_diagnostic",
+    "basis": "llama.cpp b9518 Vulkan0 separate -p bucket -n 512, r=1, batch=512, ubatch=512, threads=16, fp16 KV, no warmup; 1k is retained outside the product matrix",
+    "refreshed_at": "2026-06-29T05:25:20Z",
+    "is_bootstrap_placeholder": false,
+    "scope": {
+      "input_buckets": [
+        2048,
+        4096,
+        8192
+      ],
+      "output_tokens": 512,
+      "cache_mode": "cold_no_prefix",
+      "mode": "separate"
+    },
+    "artifacts": {
+      "2048": "output/r0-llama-denominator-20260629T052236Z/",
+      "4096": "output/r0-llama-denominator-20260629T052358Z/",
+      "8192": "output/r0-llama-denominator-20260629T052520Z/"
+    },
+    "diagnostic_artifacts": {
+      "1024": "output/r0-llama-denominator-20260629T052112Z/"
+    },
+    "prefill_tokens_s": {
+      "2048": 302.115228,
+      "4096": 280.61103,
+      "8192": 244.749394
+    },
+    "decode_tokens_s": {
+      "2048": 19.583565,
+      "4096": 19.643591,
+      "8192": 19.551196
+    },
+    "unrefreshed_buckets_use_bootstrap_targets": [
+      16384,
+      32768,
+      65536,
+      131072
+    ]
+  },
+  "accuracy": {
+    "component": {
+      "cosine_min": 0.999,
+      "relative_l2_max": 0.002,
+      "finite_outputs_required": true
+    },
+    "teacher_forced_distribution": {
+      "product_reference": "locked stock OpenVINO GPU U4",
+      "kl_divergence_max": 0.005,
+      "top1_min": 0.99
+    },
+    "tokens": {
+      "deterministic_greedy_exact_match_required": true,
+      "reference_runtimes": [
+        "stock OpenVINO GPU U4"
+      ],
+      "reference_runtimes_must_be_reported": true,
+      "min_prompt_cases": 3,
+      "min_reference_consensus_prompt_cases": 0,
+      "reference_consensus_required_before_candidate_scoring": false,
+      "legacy_diagnostic_reference_runtimes": [
+        "llama.cpp GGUF",
+        "native GGUF runtime"
+      ],
+      "legacy_reference_disagreement_policy": "diagnostic_not_candidate_pass_or_failure",
+      "first_divergence_blocks_promotion": true
+    },
+    "long_context": {
+      "sentinel_retrieval_required": true,
+      "all_accepted_buckets_must_pass": true
+    }
+  },
+  "smoothness": {
+    "adjacent_decode_tpot_unexplained_regression_max": 0.25,
+    "target_normalized_score_cv_max": 0.12,
+    "adjacent_prefill_target_ratio_regression_max": 0.25,
+    "prefill_target_normalized_score_cv_max": 0.15,
+    "decode_tpot_p95_over_p50_max": 1.25,
+    "resident_memory_growth_max": 0.05,
+    "no_oom_required": true,
+    "prefix_hit_rows_are_separate": true
+  },
+  "artifact_contract": {
+    "required_files": [
+      "manifest.json",
+      "metrics.jsonl",
+      "correctness.json",
+      "smoothness.json",
+      "summary.md"
+    ],
+    "route_labels": [
+      "smoke_only",
+      "diagnostic",
+      "contract_promoted",
+      "component_promoted",
+      "slice_promoted",
+      "loop_promoted",
+      "product_candidate",
+      "rejected"
+    ]
+  }
+}

@@ -1,0 +1,110 @@
+diff --git a/src/plugins/intel_gpu/src/plugin/transformations/dynamic_quantize_fully_connected.cpp b/src/plugins/intel_gpu/src/plugin/transformations/dynamic_quantize_fully_connected.cpp
+--- a/src/plugins/intel_gpu/src/plugin/transformations/dynamic_quantize_fully_connected.cpp
++++ b/src/plugins/intel_gpu/src/plugin/transformations/dynamic_quantize_fully_connected.cpp
+@@ -135,40 +135,85 @@
+         }
+ 
+         const auto activation = m_fc->input_value(0);
++        const auto activation_node = activation.get_node_shared_ptr();
++        const bool iq36_gated_dynamic_quantize =
++            activation_node->get_type_name() ==
++            std::string("IQ36GatedTransposeDynamicQuantize");
+         std::shared_ptr<DynamicQuantize> dyn_quan;
+-        for (const auto& cached : *shared_dynamic_quantize) {
+-            if (cached.input_node == activation.get_node_shared_ptr() &&
+-                cached.input_index == activation.get_index() &&
+-                same_attributes(cached.attrs, config)) {
+-                dyn_quan = cached.operation;
+-                GPU_DEBUG_TRACE << "Dynamic quantization: reusing "
+-                                << dyn_quan->get_friendly_name() << " for "
+-                                << m_fc->get_friendly_name() << std::endl;
+-                break;
++        if (!iq36_gated_dynamic_quantize) {
++            for (const auto& cached : *shared_dynamic_quantize) {
++                if (cached.input_node == activation_node &&
++                    cached.input_index == activation.get_index() &&
++                    same_attributes(cached.attrs, config)) {
++                    dyn_quan = cached.operation;
++                    GPU_DEBUG_TRACE << "Dynamic quantization: reusing "
++                                    << dyn_quan->get_friendly_name() << " for "
++                                    << m_fc->get_friendly_name() << std::endl;
++                    break;
++                }
++            }
++            if (!dyn_quan) {
++                dyn_quan = std::make_shared<DynamicQuantize>(activation, config);
++                shared_dynamic_quantize->push_back({
++                    activation_node, activation.get_index(), config, dyn_quan});
+             }
+         }
+-        if (!dyn_quan) {
+-            dyn_quan = std::make_shared<DynamicQuantize>(activation, config);
+-            shared_dynamic_quantize->push_back({
+-                activation.get_node_shared_ptr(), activation.get_index(),
+-                config, dyn_quan});
++
++        ov::Output<ov::Node> quantized_activation;
++        ov::Output<ov::Node> activation_scale;
++        ov::Output<ov::Node> optional_a_zp =
++            std::make_shared<ov::intel_gpu::op::Placeholder>();
++        ov::Output<ov::Node> optional_precomputed_reduction =
++            std::make_shared<ov::intel_gpu::op::Placeholder>();
++        if (iq36_gated_dynamic_quantize) {
++            const auto scale_shape = activation_node->get_output_partial_shape(2);
++            OPENVINO_ASSERT(
++                adj_group_size == 64 &&
++                config.quantization_type == QuantizationType::Symmetric &&
++                config.quantization_dt == element::i8 &&
++                config.scale_dt == element::f16 &&
++                config.precomputed_reduction &&
++                config.precomputed_reduction_dt == element::i32 &&
++                activation_node->get_output_size() == 4 &&
++                activation_node->get_output_element_type(1) == element::i8 &&
++                activation_node->get_output_element_type(2) == element::f16 &&
++                activation_node->get_output_element_type(3) == element::i32 &&
++                activation_node->get_output_partial_shape(1).compatible(
++                    activation_node->get_output_partial_shape(0)) &&
++                scale_shape.rank().is_static() &&
++                scale_shape.rank().get_length() == 3 &&
++                scale_shape[2].compatible(64) &&
++                activation_node->get_output_partial_shape(3).compatible(
++                    scale_shape),
++                "IQ36 gated dynamic-quantize contract mismatch for ",
++                m_fc->get_friendly_name());
++            quantized_activation = activation_node->output(1);
++            activation_scale = activation_node->output(2);
++            optional_precomputed_reduction = activation_node->output(3);
++            GPU_DEBUG_TRACE << "Dynamic quantization: consuming IQ36 gated "
++                            << "prequantized activation for "
++                            << m_fc->get_friendly_name() << std::endl;
++        } else {
++            quantized_activation = dyn_quan->output(0);
++            activation_scale = dyn_quan->output(1);
++            int dyn_quan_output_idx = 2;
++            if (config.quantization_type != QuantizationType::Symmetric)
++                optional_a_zp = dyn_quan->output(dyn_quan_output_idx++);
++            if (config.precomputed_reduction)
++                optional_precomputed_reduction =
++                    dyn_quan->output(dyn_quan_output_idx++);
+         }
+-        int dyn_quan_output_idx = 2;
+-        auto optional_a_zp = config.quantization_type == QuantizationType::Symmetric ?
+-                                std::make_shared<ov::intel_gpu::op::Placeholder>() : dyn_quan->output(dyn_quan_output_idx++);
+-        auto optional_precomputed_reduction = config.precomputed_reduction ?
+-                                 dyn_quan->output(dyn_quan_output_idx++) : std::make_shared<ov::intel_gpu::op::Placeholder>();
+ 
+         auto output_type = m_fc->get_output_type();
+         if (output_type.is_dynamic())
+             output_type = m_fc->get_input_element_type(0);
+ 
+-        auto new_fc = std::make_shared<op::FullyConnectedCompressed>(dyn_quan->output(0),
++        auto new_fc = std::make_shared<op::FullyConnectedCompressed>(quantized_activation,
+                                                                      m_fc->input_value(1),
+                                                                      m_fc->input_value(2),
+                                                                      m_fc->input_value(3),
+                                                                      optional_w_zp->output(0),
+-                                                                     dyn_quan->output(1),
++                                                                     activation_scale,
+                                                                      optional_a_zp,
+                                                                      optional_precomputed_reduction,
+                                                                      output_type);

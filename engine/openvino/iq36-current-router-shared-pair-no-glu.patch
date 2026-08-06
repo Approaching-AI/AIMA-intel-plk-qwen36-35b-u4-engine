@@ -1,0 +1,26 @@
+diff --git a/src/plugins/intel_gpu/src/plugin/transformations_pipeline.cpp b/src/plugins/intel_gpu/src/plugin/transformations_pipeline.cpp
+--- a/src/plugins/intel_gpu/src/plugin/transformations_pipeline.cpp
++++ b/src/plugins/intel_gpu/src/plugin/transformations_pipeline.cpp
+@@ -6,6 +6,7 @@
+ 
+ #include <algorithm>
+ #include <cctype>
++#include <cstdlib>
+ #include <cmath>
+ #include <deque>
+ #include <limits>
+@@ -1564,7 +1565,13 @@ void TransformationsPipeline::apply(std::shared_ptr<ov::Model> func) {
+         }
+         manager.register_pass<ov::intel_gpu::UnsqueezeBroadcastReshapeSDPAFusion>();
+ 
+-        manager.register_pass<ov::pass::GLUFusion>();
++        // The locked N=[512,512] shared pair must retain its decomposed
++        // Swish+Multiply arithmetic. GLUFusion changes that exact boundary
++        // after the horizontal FC pass and fails recurrent product numerics.
++        const char* iq36_router_shared_pair =
++            std::getenv("IQ36_ROUTER_SHARED_PAIR");
++        if (!(iq36_router_shared_pair && std::string(iq36_router_shared_pair) == "1"))
++            manager.register_pass<ov::pass::GLUFusion>();
+         manager.register_pass<ov::intel_gpu::IndirectKVCache>();
+ 
+         if (!has_shared_kv_cache_vars(func)) {

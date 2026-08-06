@@ -1,0 +1,5 @@
+*.patch -whitespace
+*.md whitespace=-blank-at-eof
+engine/service/iq36_server/__init__.py whitespace=-blank-at-eof
+engine/service/iq36_server/__main__.py whitespace=-blank-at-eof
+engine/service/iq36_server/prefix_cache.py whitespace=-blank-at-eof

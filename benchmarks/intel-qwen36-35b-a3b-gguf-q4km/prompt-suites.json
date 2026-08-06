@@ -1,0 +1,30 @@
+{
+  "contract_version": "0.2",
+  "workstream": "intel-qwen36-35b-a3b-gguf-q4km",
+  "model": {
+    "path": "/home/intel/Qwen3.6-35B-A3B-ov",
+    "sha256": "46140b595760e891d9626c5bfaffc2c998cce176d0de7f6c290af5ae1f2393a4",
+    "sha256_scope": "openvino_language_model.bin",
+    "batch_size": 1
+  },
+  "suites": {
+    "short": {
+      "path": "prompts/deterministic-greedy.jsonl",
+      "kind": "token_exact",
+      "min_cases": 3
+    },
+    "router-stability": {
+      "path": "prompts/router-stability.jsonl",
+      "kind": "token_exact",
+      "min_cases": 3
+    },
+    "long-context-sentinels": {
+      "path": "prompts/long-context-sentinels.jsonl",
+      "kind": "sentinel_retrieval"
+    },
+    "prefill-shape": {
+      "path": "prompts/prefill-shape.jsonl",
+      "kind": "prefill_shape"
+    }
+  }
+}

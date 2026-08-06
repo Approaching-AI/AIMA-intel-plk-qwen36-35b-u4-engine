@@ -1,0 +1,303 @@
+diff --git a/src/plugins/intel_gpu/src/graph/impls/ocl/custom_primitive.cpp b/src/plugins/intel_gpu/src/graph/impls/ocl/custom_primitive.cpp
+--- a/src/plugins/intel_gpu/src/graph/impls/ocl/custom_primitive.cpp
++++ b/src/plugins/intel_gpu/src/graph/impls/ocl/custom_primitive.cpp
+@@ -12,6 +12,8 @@
+ #include "jitter.h"
+ 
+ #include <cstdlib>
++#include <array>
++#include <chrono>
+ #include <fstream>
+ #include <map>
+ #include <sstream>
+@@ -19,6 +21,7 @@
+ #include <memory>
+ #include <string>
+ #include <string_view>
++#include <utility>
+ 
+ namespace kernel_selector {
+ using jit_constants = kernel_selector::JitConstants;
+@@ -33,7 +36,7 @@
+ 
+     DECLARE_OBJECT_TYPE_SERIALIZATION(cldnn::ocl::custom_gpu_primitive_impl)
+ 
+-    std::shared_ptr<kernel_selector::cl_kernel_data> cl_kernel;
++    std::vector<std::shared_ptr<kernel_selector::cl_kernel_data>> cl_kernels;
+     std::vector<kernel::ptr> _kernels;
+ 
+     std::unique_ptr<primitive_impl> clone() const override {
+@@ -44,7 +47,7 @@
+     : _kernels() {}
+ 
+     custom_gpu_primitive_impl(const custom_gpu_primitive_impl& other)
+-    : cl_kernel(other.cl_kernel)
++    : cl_kernels(other.cl_kernels)
+     , _kernels({}) {
+         for (const auto& kernel : other._kernels) {
+             _kernels.emplace_back(kernel->clone(other.can_share_kernels));
+@@ -52,13 +55,15 @@
+     }
+ 
+     custom_gpu_primitive_impl(const custom_gpu_primitive_node& arg,
+-                             std::shared_ptr<kernel_selector::cl_kernel_data>& cl_kernel)
+-        : cl_kernel(cl_kernel)
++                             std::vector<std::shared_ptr<kernel_selector::cl_kernel_data>> cl_kernels)
++        : cl_kernels(std::move(cl_kernels))
+         , _kernels() { }
+ 
+     std::vector<std::shared_ptr<cldnn::kernel_string>> get_kernels_source() override {
+         std::vector<std::shared_ptr<cldnn::kernel_string>> kernel_strings;
+-        kernel_strings.push_back(cl_kernel->code.kernelString);
++        for (const auto& cl_kernel : cl_kernels) {
++            kernel_strings.push_back(cl_kernel->code.kernelString);
++        }
+         return kernel_strings;
+     }
+ 
+@@ -70,12 +75,21 @@
+     }
+ 
+     void init_by_cached_kernels(const kernels_cache& kernels_cache, std::vector<std::string>& cached_kernel_ids) override {
+-        _kernels.emplace_back(kernels_cache.get_kernel_from_cached_kernels(cached_kernel_ids[0]));
++        OPENVINO_ASSERT(cached_kernel_ids.size() == cl_kernels.size(),
++                        "Cached IQ36 custom kernel count mismatch");
++        for (const auto& id : cached_kernel_ids) {
++            _kernels.emplace_back(kernels_cache.get_kernel_from_cached_kernels(id));
++        }
+         this->can_share_kernels = kernels_cache.get_kernels_reuse();
+     }
+ 
+     std::vector<std::string> get_cached_kernel_ids(const kernels_cache& kernels_cache) override {
+-        return {kernels_cache.get_cached_kernel_id(_kernels[0])};
++        std::vector<std::string> ids;
++        ids.reserve(_kernels.size());
++        for (const auto& kernel : _kernels) {
++            ids.push_back(kernels_cache.get_cached_kernel_id(kernel));
++        }
++        return ids;
+     }
+ 
+     void set_kernels(cldnn::kernels_cache::compiled_kernels kernels) override {
+@@ -100,7 +114,11 @@
+             args.outputs.push_back(instance.output_memory_ptr(i));
+         }
+ 
+-        stream.set_arguments(*_kernels.front(), cl_kernel.get()->params, args);
++        OPENVINO_ASSERT(_kernels.size() == cl_kernels.size(),
++                        "Compiled IQ36 custom kernel count mismatch");
++        for (size_t index = 0; index < _kernels.size(); ++index) {
++            stream.set_arguments(*_kernels[index], cl_kernels[index]->params, args);
++        }
+     }
+ 
+     event::ptr execute_impl(const std::vector<event::ptr>& events,
+@@ -115,7 +133,79 @@
+             args.outputs.push_back(instance.output_memory_ptr(i));
+         }
+ 
+-        return stream.enqueue_kernel(*_kernels.front(), cl_kernel.get()->params, args, events, instance.is_output());
++        OPENVINO_ASSERT(_kernels.size() == cl_kernels.size(),
++                        "Compiled IQ36 custom kernel count mismatch");
++        std::vector<event::ptr> dependencies(events);
++        std::vector<event::ptr> stage_events;
++        event::ptr last_event;
++        for (size_t index = 0; index < _kernels.size(); ++index) {
++            // A concrete event between stages is the device-side ordering
++            // primitive.  No host wait or state readback enters this path.
++            last_event = stream.enqueue_kernel(*_kernels[index],
++                                               cl_kernels[index]->params,
++                                               args,
++                                               dependencies,
++                                               true);
++            dependencies = {last_event};
++            stage_events.push_back(last_event);
++        }
++        if (const char* trace_path =
++                std::getenv("IQ36_ADAPTIVE_STAGE_PROFILE_PATH");
++            trace_path != nullptr && trace_path[0] != '\0' &&
++            last_event != nullptr) {
++            struct stage_profile_trace {
++                std::vector<event::ptr> events;
++                std::array<std::string, 4> entries;
++                std::string node;
++                std::string path;
++            };
++            auto* trace = new stage_profile_trace{
++                stage_events,
++                {
++                    "iq36_adaptive_attention_partial",
++                    "iq36_adaptive_attention_select_reduce_union",
++                    "iq36_adaptive_attention_correct_normalize",
++                    "iq36_adaptive_attention_ordered_update",
++                },
++                instance.id(),
++                trace_path,
++            };
++            const bool attached = last_event->add_event_handler(
++                [](void* data) {
++                    std::unique_ptr<stage_profile_trace> trace(
++                        static_cast<stage_profile_trace*>(data));
++                    std::ofstream output(trace->path, std::ios::app);
++                    output << "{\"node\":\"" << trace->node
++                           << "\",\"stages\":[";
++                    for (size_t index = 0; index < trace->events.size();
++                         ++index) {
++                        long long executing_ns = -1;
++                        for (const auto& interval :
++                             trace->events[index]->get_profiling_info()) {
++                            if (interval.stage ==
++                                instrumentation::profiling_stage::executing) {
++                                executing_ns = std::chrono::duration_cast<
++                                    std::chrono::nanoseconds>(
++                                        interval.value->value()).count();
++                            }
++                        }
++                        if (index != 0) {
++                            output << ',';
++                        }
++                        output << "{\"entry\":\"" << trace->entries[index]
++                               << "\",\"executing_ns\":" << executing_ns
++                               << '}';
++                    }
++                    output << "]}\n";
++                },
++                trace);
++            if (!attached) {
++                delete trace;
++            }
++        }
++        // Preserve all four device intervals in primitive profiling while
++        // retaining the last event as the dependency carrier.
++        return stream.aggregate_events(stage_events, stage_events.size() > 1);
+     }
+ 
+     std::vector<kernel::ptr> get_kernels() const override {
+@@ -124,13 +207,23 @@
+ 
+     void save(BinaryOutputBuffer& ob) const override {
+         parent::save(ob);
+-        ob << *cl_kernel;
++        ob << cl_kernels.size();
++        for (const auto& cl_kernel : cl_kernels) {
++            ob << *cl_kernel;
++        }
+     }
+ 
+     void load(BinaryInputBuffer& ib) override {
+         parent::load(ib);
+-        cl_kernel = std::make_shared<kernel_selector::cl_kernel_data>();
+-        ib >> *cl_kernel;
++        size_t count = 0;
++        ib >> count;
++        cl_kernels.clear();
++        cl_kernels.reserve(count);
++        for (size_t index = 0; index < count; ++index) {
++            auto cl_kernel = std::make_shared<kernel_selector::cl_kernel_data>();
++            ib >> *cl_kernel;
++            cl_kernels.push_back(std::move(cl_kernel));
++        }
+     }
+ };
+ 
+@@ -454,7 +547,99 @@
+         cl_kernel->params.arguments.push_back(get_arg(p));
+     }
+ 
+-    return std::make_unique<custom_gpu_primitive_impl>(arg, cl_kernel);
++    std::vector<std::shared_ptr<kernel_selector::cl_kernel_data>> cl_kernels;
++    if (primitive->kernel_entry_point != "iq36_adaptive_attention") {
++        cl_kernels.push_back(cl_kernel);
++    } else {
++        const auto input_shape = impl_param.get_input_layout(0).get_partial_shape();
++        OPENVINO_ASSERT(input_shape.is_static() && input_shape.size() == 4,
++                        "IQ36 adaptive query shape must be static rank four");
++        const size_t batch = input_shape[0].get_length();
++        const size_t query_tokens = input_shape[2].get_length();
++        if (query_tokens != 1) {
++            // Preserve the accepted unified cold-aware prefill state owner.
++            cl_kernel->code.kernelString->entry_point =
++                "iq36_hot_attention_single_owner";
++            cl_kernels.push_back(cl_kernel);
++        } else {
++            const auto length_shape =
++                impl_param.get_input_layout(12).get_partial_shape();
++            const auto scratch_shape =
++                impl_param.get_output_layout(0).get_partial_shape();
++            OPENVINO_ASSERT(length_shape.is_static() &&
++                            length_shape.size() == 4 &&
++                            scratch_shape.is_static() &&
++                            scratch_shape.size() == 4,
++                            "IQ36 adaptive carriers must be static rank four");
++            constexpr size_t hot_chunks = 16384 / 512;
++            constexpr size_t query_heads = 16;
++            constexpr size_t kv_heads = 2;
++            constexpr size_t gqa_group = 8;
++            constexpr size_t head_dim = 256;
++            constexpr size_t local_topk = 64;
++            const size_t max_chunks = length_shape[3].get_length();
++            OPENVINO_ASSERT(max_chunks > hot_chunks,
++                            "IQ36 adaptive carrier is shorter than hot history");
++            const size_t max_cold_chunks = max_chunks - hot_chunks;
++            const size_t max_cold_tokens = max_cold_chunks * 512;
++            const size_t max_partitions = max_chunks * 2;
++            const size_t max_tokens = max_chunks * 512;
++            const size_t partial_meta =
++                kv_heads * max_partitions * gqa_group;
++            const size_t raw_bytes =
++                partial_meta * 4 + partial_meta * 4 +
++                partial_meta * head_dim * 4 +
++                query_heads * max_tokens * 4 +
++                query_heads * max_cold_chunks * local_topk * 4 +
++                kv_heads * ((max_cold_tokens + 31) / 32) * 4 +
++                kv_heads * 4 + query_heads * head_dim * 4;
++            const size_t required_f32 = ((raw_bytes + 63) / 64) * 64 / 4;
++            OPENVINO_ASSERT(
++                static_cast<size_t>(scratch_shape[3].get_length()) >=
++                    required_f32,
++                            "IQ36 adaptive output0 scratch is undersized");
++
++            const std::array<const char*, 4> entries = {
++                "iq36_adaptive_attention_partial",
++                "iq36_adaptive_attention_select_reduce_union",
++                "iq36_adaptive_attention_correct_normalize",
++                "iq36_adaptive_attention_ordered_update",
++            };
++            const std::array<std::vector<size_t>, 4> globals = {{
++                {128, max_chunks, batch * kv_heads},
++                {256, query_heads, batch},
++                {128, max_partitions, batch * kv_heads},
++                {128, kv_heads, batch},
++            }};
++            const std::array<std::vector<size_t>, 4> locals = {{
++                {128, 1, 1},
++                {256, 1, 1},
++                {128, 1, 1},
++                {128, 1, 1},
++            }};
++            for (size_t stage_index = 0; stage_index < entries.size();
++                 ++stage_index) {
++                auto stage = std::make_shared<kernel_selector::cl_kernel_data>(
++                    *cl_kernel);
++                stage->code.kernelString =
++                    std::make_shared<kernel_selector::kernel_string>(
++                        *cl_kernel->code.kernelString);
++                stage->code.kernelString->entry_point = entries[stage_index];
++                stage->code.kernelString->options +=
++                    " -DIQ36_ADAPTIVE_STAGE=" +
++                    std::to_string(stage_index + 1);
++                stage->code.kernelString->jit = get_jit_constant(
++                    arg, impl_param, globals[stage_index],
++                    locals[stage_index]);
++                stage->params.workGroups.global = globals[stage_index];
++                stage->params.workGroups.local = locals[stage_index];
++                cl_kernels.push_back(std::move(stage));
++            }
++        }
++    }
++
++    return std::make_unique<custom_gpu_primitive_impl>(
++        arg, std::move(cl_kernels));
+ }
+ 
+ namespace detail {

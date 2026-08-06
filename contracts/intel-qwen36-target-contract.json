@@ -1,0 +1,120 @@
+{
+  "captured_at": "2026-06-26T03:21:37.647393+00:00",
+  "contract_version": "0.2",
+  "execution": {
+    "mode": "local",
+    "network_transport_required": false,
+    "repository_root": "/home/intel/intel-qwen36",
+    "staging_roots": [
+      "/home/intel/intel-qwen36-gpu",
+      "/home/intel/intel-qwen36-r0",
+      "/home/intel/intel-qwen36-r1",
+      "/home/intel/intel-qwen36-run"
+    ]
+  },
+  "hardware": {
+    "cores_per_socket": 16,
+    "cpu_model": "Intel(R) Core(TM) Ultra X7 358H",
+    "logical_cpus": 16,
+    "memory_total_gib": 62.29,
+    "pci_highlights": [
+      "00:02.0 VGA compatible controller: Intel Corporation Device b080 (rev 04)",
+      "00:0b.0 Processing accelerators: Intel Corporation Device b03e (rev 04)"
+    ],
+    "root_filesystem": {
+      "device": "/dev/nvme0n1p2",
+      "size_gib": 936.79
+    },
+    "sockets": 1,
+    "swap_total_gib": 8.0,
+    "threads_per_core": 1
+  },
+  "platform": {
+    "architecture": "x86_64",
+    "kernel": "6.17.12-061712-generic",
+    "os": "Ubuntu 24.04.4 LTS",
+    "python": "Python 3.12.3"
+  },
+  "r0_refresh": {
+    "completed_items": [
+      "live target contract recapture",
+      "model path/size/SHA-256/GGUF metadata confirmation",
+      "current-target native GGUF source-stream roof probe",
+      "current-target model-real M=1 qmatvec probe",
+      "per-bucket KV/read pressure estimate",
+      "dominant-route feasibility hard gate: raw OpenCL GGUF source-stream/qmatvec rejected",
+      "denominator/oracle boundary resolution recorded: OpenVINO 262144 resource failure is not a denominator metric",
+      "llama.cpp/Vulkan denominator preflight and smoke rows passed on target",
+      "llama.cpp/Vulkan 262144 paired denominator attempt timed out without a metric and was cleaned up",
+      "R0 policy accepted 262144 denominator lane as unavailable without allowing speedup claims",
+      "full oracle capture specification generated with 17 boundary types and 520 per-layer records",
+      "oracle runtime preflight found a llama.cpp completion-probabilities route for distribution capture and no stock boundary tensor route",
+      "boundary capture route preflight confirmed the target llama.cpp install is binary-only, no instrumentable source tree is present, the Intel env user-space toolchain is available, and the next boundary route is to stage exact llama.cpp commit 7c158fbb4 and build with that env",
+      "llama.cpp source build route resolved target build 9518 to official upstream commit 7c158fbb4aec1bdc9c81d6ca0e785139f4826fae and staged that source tree under /home/intel/intel-qwen36-r0/source for instrumentation",
+      "llama.cpp instrumentation map resolved all 17 oracle boundary types to line-level Qwen35MoE, llama-graph, and sampler hook points in the staged source without patching or closing R0",
+      "boundary capture instrumentation patch added a dedicated llama-qwen36-boundary-capture target to the staged llama.cpp source with one-token decode capture gating",
+      "boundary capture executable built successfully on target with the Intel env toolchain and --help self-check",
+      "enhanced boundary capture run succeeded on the locked model for short_math_001 source token position 15, producing 1493 tensor JSONL rows and 1493 payload files including linear-attention tensors",
+      "hybrid-aware boundary capture coverage preflight found effective policy coverage for all 524 input tasks and all 524 output tasks while keeping R0 open for bundle assembly and validation",
+      "boundary bundle fragment assembled 524 input rows and 524 output rows with 60 policy-not-applicable RoPE rows and 40 derived MoE residual outputs without claiming a full oracle bundle",
+      "current-target distribution capture smoke produced one llama.cpp completion-probabilities row for short_math_001",
+      "current-target short/router distribution capture produced six llama.cpp completion-probabilities rows with 429 top-logprob positions",
+      "current-target materialized 1k through 128k sentinel/prefill distribution capture produced eighteen rows with 7154 top-logprob positions",
+      "current-target materialized 1k through 4k sentinel/prefill 1024-token-request distribution capture produced six rows with 4262 top-logprob positions",
+      "current-target materialized 8k through 16k sentinel/prefill 1024-token-request distribution capture produced four rows with 3000 top-logprob positions",
+      "current-target materialized 32k through 64k sentinel/prefill 1024-token-request distribution capture produced four rows with 2971 top-logprob positions",
+      "current-target materialized 100k sentinel/prefill 1024-token-request distribution capture produced two rows with 1041 top-logprob positions",
+      "current-target materialized 128k sentinel/prefill 1024-token-request distribution capture produced two rows with 1041 top-logprob positions",
+      "full oracle capture queue generated with 1100 required bundle JSONL rows",
+      "full oracle prompt materialization verified 26 prompts with exact generated counts through 262144 tokens using target llama.cpp tokenizer",
+      "full-ladder prompt token IDs captured for 26 oracle rows totaling 1251478 tokens using target llama.cpp tokenizer",
+      "bounded first-token top-k smoke captured materialized 1k through 128k sentinel/prefill rows across six artifacts",
+      "exact 262144-token top-k smoke attempted and rejected by llama.cpp server at n_ctx 262144 with exceed_context_size_error",
+      "R0 prompt-edge policy accepted exact 262144-token first-token top-k as unavailable under the locked context contract",
+      "resident harness load gate audited: locked model and oracle bundle layout enforced, no real bundle present",
+      "full oracle bundle validator recorded 524 required boundary records, explicit 256k prompt-edge policy handling, and found no closable bundle",
+      "full oracle bundle assembled and validated at oracle/r0-oracle-bundle-20260627T060028Z with 26 token/top-k rows, 26 teacher-forced distribution rows, 524 boundary input rows, and 524 boundary output rows",
+      "resident harness gate audited after oracle closure: one structurally loadable real bundle found, resident harness load execution still pending",
+      "resident harness load(model, oracle_bundle) executed successfully with oracle/r0-oracle-bundle-20260627T060028Z using build/engine/iq36-load-bundle",
+      "resident harness load(model, oracle_bundle) executed successfully and loaded oracle row counts 26/26/524/524 using build/engine/iq36-load-bundle"
+    ],
+    "pending_items": [],
+    "required": true
+  },
+  "repo": "intel-qwen36",
+  "runtime": {
+    "device_nodes": [
+      "/dev/dri/card1",
+      "/dev/dri/renderD128"
+    ],
+    "opencl_compute_units": 96,
+    "opencl_device": "Intel(R) Arc(TM) B390 GPU",
+    "opencl_device_version": "OpenCL 3.0 NEO",
+    "opencl_driver_version": "26.18.38308.1",
+    "opencl_global_memory_bytes": 62400901120,
+    "opencl_max_clock_mhz": 2500,
+    "opencl_platform": "Intel(R) OpenCL Graphics",
+    "system_packages_present": [
+      "intel-driver-compiler-npu 1.32.1.20260422-24767473183~ubuntu24.04",
+      "intel-fw-npu 1.32.1.20260422-24767473183~ubuntu24.04",
+      "intel-level-zero-npu 1.32.1.20260422-24767473183~ubuntu24.04",
+      "libze-intel-gpu1 26.18.38308.1-0",
+      "libze1 1.27.0-1~24.04~ppa2",
+      "intel-opencl-icd 26.18.38308.1-0",
+      "intel-level-zero-gpu"
+    ]
+  },
+  "source": {
+    "basis": "live R0 recapture on the local target machine",
+    "evidence_path": "output/r0-live-target-model-recapture-20260626T031922Z/recapture.json",
+    "refresh_required_on_target": false,
+    "tool": "tools/intel-qwen36-r0-recapture.py"
+  },
+  "target": {
+    "host_alias": "local",
+    "machine_label": "Intel PTL CLS DVT2 358H 64GB 1TB",
+    "static_hostname": "local-ptl-target",
+    "hostname_redacted_for_release": true
+  },
+  "workstream": "intel-qwen36-35b-a3b-gguf-q4km"
+}

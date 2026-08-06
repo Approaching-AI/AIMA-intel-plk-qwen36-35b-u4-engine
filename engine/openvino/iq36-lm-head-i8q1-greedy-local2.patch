@@ -1,0 +1,187 @@
+diff --git a/src/plugins/intel_gpu/src/graph/impls/ocl/iq36_lm_head_i8q4.cpp b/src/plugins/intel_gpu/src/graph/impls/ocl/iq36_lm_head_i8q4.cpp
+--- a/src/plugins/intel_gpu/src/graph/impls/ocl/iq36_lm_head_i8q4.cpp
++++ b/src/plugins/intel_gpu/src/graph/impls/ocl/iq36_lm_head_i8q4.cpp
+@@ -40,6 +40,9 @@ constexpr size_t kBinaryPackedBytes =
+     (kRows / kRowsPerStripe) * kBinaryStripeBytes;
+ constexpr size_t kBinaryLocalTopK = 12;
+ constexpr size_t kBinaryCorrectionRows = kTopBlockCount * kBinaryLocalTopK;
++constexpr size_t kBinaryGreedyLocalTopK = 2;
++constexpr size_t kBinaryGreedyCorrectionRows =
++    kTopBlockCount * kBinaryGreedyLocalTopK;
+ constexpr size_t kBinaryGatedExactCount = 44;
+ constexpr size_t kBinaryGatedExactWorkgroups = 384;
+ constexpr float kBinaryGatedExactDelta = 11.0f;
+@@ -68,8 +71,12 @@ constexpr char kBinaryQuantizeKernelName[] =
+     "iq36_lm_head_q8_group256_f16_sums";
+ constexpr char kBinaryMatvecKernelName[] =
+     "iq36_lm_head_i8q1_rowstripe8_matvec_local_top12_f16";
++constexpr char kBinaryGreedyMatvecKernelName[] =
++    "iq36_lm_head_i8q1_rowstripe8_matvec_local_top2_f16";
+ constexpr char kBinaryCorrectionKernelName[] =
+     "iq36_lm_head_i8_exact_local_top12_correction_f16";
++constexpr char kBinaryGreedyCorrectionKernelName[] =
++    "iq36_lm_head_i8_exact_local_top2_correction_f16";
+ constexpr char kBinaryGatedExactResetKernelName[] =
+     "iq36_lm_head_i8q1_gated_exact_reset_f16";
+ constexpr char kBinaryGatedExactCollectKernelName[] =
+@@ -104,6 +111,11 @@ bool binary_gated_q4_enabled() {
+     return binary_enabled() && value != nullptr && std::string(value) == "1";
+ }
+ 
++bool binary_greedy_local2_enabled() {
++    const char* value = std::getenv("IQ36_LM_HEAD_I8Q1_GREEDY_LOCAL2");
++    return binary_enabled() && value != nullptr && std::string(value) == "1";
++}
++
+ bool enabled() {
+     const char* value = std::getenv("IQ36_LM_HEAD_I8Q4");
+     return binary_enabled() || (value != nullptr && std::string(value) == "1");
+@@ -169,6 +181,9 @@ kernel_selector::kernel_data make_binary_kernel_data() {
+     data.kernelName = kBinaryMatvecKernelName;
+     const bool gated_exact = binary_gated_exact_enabled();
+     const bool gated_q4 = binary_gated_q4_enabled();
++    const bool greedy_local2 = binary_greedy_local2_enabled();
++    const size_t correction_rows = greedy_local2
++        ? kBinaryGreedyCorrectionRows : kBinaryCorrectionRows;
+     OPENVINO_ASSERT(!(gated_exact && gated_q4),
+                     "IQ36 binary LM-head fallbacks are mutually exclusive");
+     data.kernels.resize((gated_exact || gated_q4) ? 12 : 6);
+@@ -180,8 +195,21 @@ kernel_selector::kernel_data make_binary_kernel_data() {
+ #define IQ36_ROWS 248320U
+ #define IQ36_BINARY_CODE_BYTES_PER_STRIPE 2048U
+ #define IQ36_BINARY_STRIPE_BYTES 2128U
++#if defined(IQ36_BINARY_GREEDY_LOCAL2)
++#define IQ36_BINARY_LOCAL_TOPK 2U
++#define IQ36_BINARY_CORRECTION_ROWS 1940U
++#define IQ36_BINARY_MATVEC_ENTRY \
++    iq36_lm_head_i8q1_rowstripe8_matvec_local_top2_f16
++#define IQ36_BINARY_CORRECTION_ENTRY \
++    iq36_lm_head_i8_exact_local_top2_correction_f16
++#else
+ #define IQ36_BINARY_LOCAL_TOPK 12U
+ #define IQ36_BINARY_CORRECTION_ROWS 11640U
++#define IQ36_BINARY_MATVEC_ENTRY \
++    iq36_lm_head_i8q1_rowstripe8_matvec_local_top12_f16
++#define IQ36_BINARY_CORRECTION_ENTRY \
++    iq36_lm_head_i8_exact_local_top12_correction_f16
++#endif
+ #define IQ36_BINARY_GATED_EXACT_COUNT 25U
+ #define IQ36_BINARY_GATED_EXACT_DELTA 11.0f
+ #define IQ36_BINARY_PACKED_BYTES 66053120UL
+@@ -279,7 +307,7 @@ __kernel void iq36_lm_head_q8_group256_f16_sums(
+ 
+ __attribute__((reqd_work_group_size(256, 1, 1)))
+ __attribute__((intel_reqd_sub_group_size(16)))
+-__kernel void iq36_lm_head_i8q1_rowstripe8_matvec_local_top12_f16(
++__kernel void IQ36_BINARY_MATVEC_ENTRY(
+     __global const uchar* packed,
+     __global const char* q8_qs,
+     __global const float* q8_d,
+@@ -335,7 +363,7 @@ __kernel void iq36_lm_head_i8q1_rowstripe8_matvec_local_top12_f16(
+ #if defined(IQ36_BINARY_CORRECTION_KERNEL)
+ __attribute__((reqd_work_group_size(64, 1, 1)))
+ __attribute__((intel_reqd_sub_group_size(16)))
+-__kernel void iq36_lm_head_i8_exact_local_top12_correction_f16(
++__kernel void IQ36_BINARY_CORRECTION_ENTRY(
+     __global const char* weights,
+     __global const half* weight_scales,
+     __global const char* q8_qs,
+@@ -846,10 +874,12 @@ __kernel void iq36_lm_head_i8q1_gated_q4_correction_f16(
+ 
+     auto& matvec = data.kernels[1];
+     matvec.code.kernelString = std::make_shared<kernel_selector::kernel_string>();
+-    matvec.code.kernelString->entry_point = kBinaryMatvecKernelName;
++    matvec.code.kernelString->entry_point =
++        greedy_local2 ? kBinaryGreedyMatvecKernelName : kBinaryMatvecKernelName;
+     matvec.code.kernelString->str = source;
+     matvec.code.kernelString->options =
+-        "-cl-std=CL3.0 -D IQ36_BINARY_MATVEC_KERNEL=1";
++        std::string("-cl-std=CL3.0 -D IQ36_BINARY_MATVEC_KERNEL=1") +
++        (greedy_local2 ? " -D IQ36_BINARY_GREEDY_LOCAL2=1" : "");
+     matvec.code.kernelString->batch_compilation = false;
+     matvec.params.workGroups.global = {kRows, 1, 1};
+     matvec.params.workGroups.local = {256, 1, 1};
+@@ -864,12 +894,14 @@ __kernel void iq36_lm_head_i8q1_gated_q4_correction_f16(
+ 
+     auto& correction = data.kernels[2];
+     correction.code.kernelString = std::make_shared<kernel_selector::kernel_string>();
+-    correction.code.kernelString->entry_point = kBinaryCorrectionKernelName;
++    correction.code.kernelString->entry_point = greedy_local2
++        ? kBinaryGreedyCorrectionKernelName : kBinaryCorrectionKernelName;
+     correction.code.kernelString->str = source;
+     correction.code.kernelString->options =
+-        "-cl-std=CL3.0 -D IQ36_BINARY_CORRECTION_KERNEL=1";
++        std::string("-cl-std=CL3.0 -D IQ36_BINARY_CORRECTION_KERNEL=1") +
++        (greedy_local2 ? " -D IQ36_BINARY_GREEDY_LOCAL2=1" : "");
+     correction.code.kernelString->batch_compilation = false;
+-    correction.params.workGroups.global = {kBinaryCorrectionRows * 64, 1, 1};
++    correction.params.workGroups.global = {correction_rows * 64, 1, 1};
+     correction.params.workGroups.local = {64, 1, 1};
+     correction.params.arguments = {
+         {argument_type::INPUT, 1},
+@@ -1148,7 +1180,7 @@ __kernel void iq36_lm_head_i8q1_gated_q4_correction_f16(
+     data.internalBuffers.emplace_back(8 * sizeof(float));
+     data.internalBuffers.emplace_back(8 * sizeof(int32_t));
+     data.internalBuffers.emplace_back(
+-        kBinaryCorrectionRows * sizeof(int32_t));
++        correction_rows * sizeof(int32_t));
+     data.internalBuffers.emplace_back(
+         kTopBlockCount * kTopK * sizeof(float));
+     data.internalBuffers.emplace_back(kTopK * sizeof(int32_t));
+@@ -1845,6 +1877,11 @@ struct IQ36LMHeadI8Q4Impl : typed_primitive_impl_ocl<fully_connected> {
+ 
+         const bool binary = binary_enabled();
+         const bool gated_q4 = binary_gated_q4_enabled();
++        const bool greedy_local2 = binary_greedy_local2_enabled();
++        const size_t binary_local_topk =
++            greedy_local2 ? kBinaryGreedyLocalTopK : kBinaryLocalTopK;
++        const size_t binary_correction_rows = greedy_local2
++            ? kBinaryGreedyCorrectionRows : kBinaryCorrectionRows;
+         const size_t packed_bytes = binary
+             ? (gated_q4 ? kBinaryGatedQ4PackedBytes : kBinaryPackedBytes)
+             : kPackedBytes;
+@@ -2006,9 +2043,9 @@ struct IQ36LMHeadI8Q4Impl : typed_primitive_impl_ocl<fully_connected> {
+                                      : "binary_two_centroid_lloyd5")
+                               : "signed_q4") + "\"" +
+                      ",\"exact_correction_topk\":" +
+-                         std::to_string(binary ? kBinaryLocalTopK : kTopK) +
++                         std::to_string(binary ? binary_local_topk : kTopK) +
+                      ",\"exact_correction_rows\":" +
+-                         std::to_string(binary ? kBinaryCorrectionRows : kTopK) +
++                         std::to_string(binary ? binary_correction_rows : kTopK) +
+                      ",\"direct_correction_topk\":" + std::to_string(kTopK) +
+                      ",\"adaptive_correction_delta\":" +
+                          std::to_string(
+@@ -2099,6 +2136,15 @@ std::unique_ptr<primitive_impl> IQ36LMHeadI8Q4Implementation::create(
+     const bool binary = binary_enabled();
+     const bool gated_exact = binary_gated_exact_enabled();
+     const bool gated_q4 = binary_gated_q4_enabled();
++    const bool greedy_local2 = binary_greedy_local2_enabled();
++    const size_t binary_local_topk =
++        greedy_local2 ? kBinaryGreedyLocalTopK : kBinaryLocalTopK;
++    const size_t binary_correction_rows = greedy_local2
++        ? kBinaryGreedyCorrectionRows : kBinaryCorrectionRows;
++    const char* binary_matvec_name = greedy_local2
++        ? kBinaryGreedyMatvecKernelName : kBinaryMatvecKernelName;
++    const char* binary_correction_name = greedy_local2
++        ? kBinaryGreedyCorrectionKernelName : kBinaryCorrectionKernelName;
+     auto data = binary ? make_binary_kernel_data() : make_kernel_data();
+     append_trace(std::string("{\"stage\":\"selection\",\"node\":\"") + params.desc->id +
+                  "\",\"tokens\":1,\"rows\":" + std::to_string(kRows) +
+@@ -2108,13 +2154,13 @@ std::unique_ptr<primitive_impl> IQ36LMHeadI8Q4Implementation::create(
+                          gated_q4 ? kBinaryGatedQ4PackedBytes
+                                   : binary ? kBinaryPackedBytes : kPackedBytes) +
+                  ",\"topk\":" +
+-                     std::to_string(binary ? kBinaryLocalTopK : kTopK) +
++                     std::to_string(binary ? binary_local_topk : kTopK) +
+                  ",\"correction_rows\":" +
+-                     std::to_string(binary ? kBinaryCorrectionRows : kTopK) +
++                     std::to_string(binary ? binary_correction_rows : kTopK) +
+                  ",\"provider\":\"" +
+                  (binary ?
+                     std::string(kBinaryQuantizeKernelName) + "+" +
+-                        kBinaryMatvecKernelName + "+" + kBinaryCorrectionKernelName + "+" +
++                        binary_matvec_name + "+" + binary_correction_name + "+" +
+                         kOutputSelectKernelName + "+" + kMergeKernelName + "+" +
+                         kDirectCorrectionKernelName +
+                         (gated_exact ?

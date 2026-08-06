@@ -1,0 +1,101 @@
+diff --git a/src/plugins/intel_gpu/src/graph/dynamic_quantize.cpp b/src/plugins/intel_gpu/src/graph/dynamic_quantize.cpp
+index de6e2f48..42c087f7 100644
+--- a/src/plugins/intel_gpu/src/graph/dynamic_quantize.cpp
++++ b/src/plugins/intel_gpu/src/graph/dynamic_quantize.cpp
+@@ -20,11 +20,16 @@ static bool should_skip_execution(dynamic_quantize_node const& node, const layou
+         || !act_layout.is_static())
+         return false;
+ 
+-    // Do not skip dynamic quantization if next node is not fully connected.(such as SDPA)
+-    OPENVINO_ASSERT(node.get_users().size() == node.get_outputs_count(),
+-                    "Dynamic quantization is supposed to have only one user-node with duplicated connection: ", node.id());
+-    if (!(*node.get_users().begin())->is_type<fully_connected>())
++    // Do not skip dynamic quantization if any next node is not fully connected
++    // (such as SDPA). A shared activation quantizer can feed multiple fully
++    // connected nodes, with duplicated connections for its scale/reduction
++    // outputs.
++    if (node.get_users().empty())
+         return false;
++    for (const auto* user : node.get_users()) {
++        if (!user->is_type<fully_connected>())
++            return false;
++    }
+ 
+     // If batch size is 1, dynamic_quantize is disabled for performance reason
+     size_t input_batch = act_layout.batch();
+diff --git a/src/plugins/intel_gpu/src/plugin/transformations/dynamic_quantize_fully_connected.cpp b/src/plugins/intel_gpu/src/plugin/transformations/dynamic_quantize_fully_connected.cpp
+index 73a4e22b..87e52aa3 100644
+--- a/src/plugins/intel_gpu/src/plugin/transformations/dynamic_quantize_fully_connected.cpp
++++ b/src/plugins/intel_gpu/src/plugin/transformations/dynamic_quantize_fully_connected.cpp
+@@ -17,6 +17,32 @@
+ 
+ namespace ov::intel_gpu {
+ 
++namespace {
++
++using DynamicQuantize = ov::op::internal::DynamicQuantize;
++
++struct SharedDynamicQuantize {
++    std::shared_ptr<ov::Node> input_node;
++    size_t input_index;
++    DynamicQuantize::Attributes attrs;
++    std::shared_ptr<DynamicQuantize> operation;
++};
++
++bool same_attributes(const DynamicQuantize::Attributes& lhs,
++                     const DynamicQuantize::Attributes& rhs) {
++    return lhs.quantization_type == rhs.quantization_type &&
++           lhs.quantization_dt == rhs.quantization_dt &&
++           lhs.scale_dt == rhs.scale_dt &&
++           lhs.zp_dt == rhs.zp_dt &&
++           lhs.precomputed_reduction_dt == rhs.precomputed_reduction_dt &&
++           lhs.precomputed_reduction == rhs.precomputed_reduction &&
++           lhs.group_sizes == rhs.group_sizes &&
++           lhs.scales_zp_output_order == rhs.scales_zp_output_order &&
++           lhs.output_storage_type == rhs.output_storage_type;
++}
++
++}  // namespace
++
+ // precomputed_reduction is providing partial reduction of activation from dynamic quantization into onednn for faster computation
+ // It is used for asymmetric weight.
+ DynamicQuantizeFullyConnected::DynamicQuantizeFullyConnected(uint64_t group_size,
+@@ -34,7 +60,10 @@ DynamicQuantizeFullyConnected::DynamicQuantizeFullyConnected(uint64_t group_size
+     auto fully_connected_compressed = std::make_shared<ov::pass::pattern::op::Or>(OutputVector{fully_connected_compressed3, fully_connected_compressed4});
+ 
+ 
+-    ov::matcher_pass_callback callback = [OV_CAPTURE_CPY_AND_THIS](Matcher& m) {
++    auto shared_dynamic_quantize =
++        std::make_shared<std::vector<SharedDynamicQuantize>>();
++    ov::matcher_pass_callback callback =
++        [OV_CAPTURE_CPY_AND_THIS](Matcher& m) {
+         if (transformation_callback(m.get_match_root())) {
+             return false;
+         }
+@@ -105,7 +134,25 @@ DynamicQuantizeFullyConnected::DynamicQuantizeFullyConnected(uint64_t group_size
+             config.zp_dt = element::u8; // it supports u8 only now
+         }
+ 
+-        auto dyn_quan = std::make_shared<ov::op::internal::DynamicQuantize>(m_fc->input_value(0), config);
++        const auto activation = m_fc->input_value(0);
++        std::shared_ptr<DynamicQuantize> dyn_quan;
++        for (const auto& cached : *shared_dynamic_quantize) {
++            if (cached.input_node == activation.get_node_shared_ptr() &&
++                cached.input_index == activation.get_index() &&
++                same_attributes(cached.attrs, config)) {
++                dyn_quan = cached.operation;
++                GPU_DEBUG_TRACE << "Dynamic quantization: reusing "
++                                << dyn_quan->get_friendly_name() << " for "
++                                << m_fc->get_friendly_name() << std::endl;
++                break;
++            }
++        }
++        if (!dyn_quan) {
++            dyn_quan = std::make_shared<DynamicQuantize>(activation, config);
++            shared_dynamic_quantize->push_back({
++                activation.get_node_shared_ptr(), activation.get_index(),
++                config, dyn_quan});
++        }
+         int dyn_quan_output_idx = 2;
+         auto optional_a_zp = config.quantization_type == QuantizationType::Symmetric ?
+                                 std::make_shared<ov::intel_gpu::op::Placeholder>() : dyn_quan->output(dyn_quan_output_idx++);

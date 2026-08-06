@@ -1,0 +1,332 @@
+#!/usr/bin/env python3
+"""Run an 8-token decode gate for the layer-input product consumer."""
+
+from __future__ import annotations
+
+import argparse
+import importlib.util
+import json
+import shlex
+import sys
+from pathlib import Path
+from typing import Any
+
+
+ROOT = Path(__file__).resolve().parents[1]
+WORKSTREAM = "intel-qwen36-35b-a3b-gguf-q4km"
+ACTIVE = ROOT / "doc/active" / WORKSTREAM
+BASE_GATE = (
+    ROOT
+    / "tools/intel-qwen36-router-full-attention-layer-input-product-"
+    "consumer-probe-gate.py"
+)
+
+SCHEMA_VERSION = (
+    "intel-qwen36-router-full-attention-layer-input-product-"
+    "consumer-decode-gate-v0"
+)
+DEFAULT_ROUTES = ACTIVE / "routes-ledger.json"
+DEFAULT_SEQ346 = (
+    ROOT
+    / "output/router-full-attention-layer-input-product-consumer-probe-gate-20260708Tseq346Z"
+    / "metrics.json"
+)
+DEFAULT_TOKEN_INPUT_DIR = (
+    ROOT
+    / "output/r1-engine-seed-prompt-input-check-20260627T155328Z/token-input"
+)
+DEFAULT_OUT_DIR = (
+    ROOT
+    / "output/router-full-attention-layer-input-product-consumer-decode-gate-20260708Tseq347Z"
+)
+DEFAULT_HOST = "local"
+DEFAULT_MODEL = "/home/intel/models/gguf/qwen3.6-35b-a3b-q4_k_m.gguf"
+DEFAULT_ENV_SCRIPT = "/home/intel/intel-box-run/current/tools/intel/activate-intel-box-env.sh"
+DEFAULT_REMOTE_ROOT = "/home/intel/intel-qwen36-gpu"
+
+ROWBLOCK16_LAYERS = (
+    "0,1,2,4,5,6,8,9,10,12,13,14,16,17,18,24,25,26,28,29,30,33,34,36,37,38"
+)
+PRODUCER_LAYERS = [3, 7, 11, 15, 19, 23, 27, 31, 35]
+HIDDEN_SIZE = 2048
+DECODE_TOKENS = 8
+EXPECTED_LAYERS = len(PRODUCER_LAYERS) * DECODE_TOKENS
+EXPECTED_VALUES = EXPECTED_LAYERS * HIDDEN_SIZE
+
+
+def _load_base() -> Any:
+  spec = importlib.util.spec_from_file_location("iq36_layer_input_consumer_probe", BASE_GATE)
+  if spec is None or spec.loader is None:
+    raise SystemExit(f"cannot load base gate: {BASE_GATE}")
+  module = importlib.util.module_from_spec(spec)
+  sys.modules[spec.name] = module
+  spec.loader.exec_module(module)
+  return module
+
+
+BASE = _load_base()
+
+
+def _counter_ready(smoke: dict[str, Any], prefix: str) -> bool:
+  return (
+      smoke.get(f"{prefix}_enabled") is True
+      and smoke.get(f"{prefix}_layers") == EXPECTED_LAYERS
+      and smoke.get(f"{prefix}_values") == EXPECTED_VALUES
+      and smoke.get(f"{prefix}_misses") == 0
+      and smoke.get(f"{prefix}_ready") is True
+  )
+
+
+def _run_decode(args: argparse.Namespace, binary: str,
+                remote_token_dir: str) -> dict[str, Any]:
+  flags = [
+      "--model", shlex.quote(args.model),
+      "--token-dir", shlex.quote(remote_token_dir),
+      "--case-id", "short_math_001",
+      "--device-substring", "B390",
+      "--repeat", "1",
+      "--decode-tokens", str(DECODE_TOKENS),
+      "--lm-head-threads", "16",
+      "--shared-q4-runner",
+      "--resident-q4-weights",
+      "--resident-selected-q4-experts",
+      "--resident-selected-q6-experts",
+      "--resident-selected-q6-sorted-cache",
+      "--resident-selected-q6-rowstripe",
+      "--resident-selected-cache-topk", "16",
+      "--resident-shared-q6-down",
+      "--resident-full-attention-v-q6",
+      "--resident-linear-q6-qkv",
+      "--resident-q4-cpu-order-z",
+      "--resident-linear-conv-weights",
+      "--resident-linear-state",
+      "--resident-postconv-delta-handoff",
+      "--resident-norm-weights",
+      "--resident-gate-up-swiglu-handoff",
+      "--resident-attention-front-handoff",
+      "--resident-full-core-attention-front-handoff",
+      "--gpu-router",
+      "--gpu-lm-head-q6",
+      "--opencl-double-swiglu",
+  ]
+  env = [
+      "IQ36_OPENCL_NO_QUEUE_PROFILING=1",
+      "IQ36_ATTENTION_FRONT_OUTPUT_PROJECTION_ROWBLOCK16=1",
+      f"IQ36_ATTENTION_FRONT_OUTPUT_PROJECTION_ROWBLOCK16_LAYERS={ROWBLOCK16_LAYERS}",
+      "IQ36_SELECTED_SHARED_Q4_GATEUP_COMBINED=1",
+      "IQ36_SELECTED_SHARED_Q4_DOWN_COMBINED=1",
+      "IQ36_SELECTED_SHARED_Q6_DOWN_COMBINED=1",
+      "IQ36_DEFER_FFN_DOWN_FINISH_BUNDLE=1",
+      "IQ36_FULL_ATTENTION_LAYER_INPUT_PRODUCT_SOURCE=1",
+      "IQ36_FULL_ATTENTION_LAYER_INPUT_PRODUCT_CONSUMER_SOURCE=1",
+  ]
+  remote_script = " && ".join([
+      f"source {shlex.quote(args.env_script)} >/dev/null 2>&1",
+      " ".join([*env, shlex.quote(binary), *flags]),
+  ])
+  return BASE.iq36_local.run_target(
+      args.host, f"bash -lc {shlex.quote(remote_script)}", args.timeout_s)
+
+
+def compute(args: argparse.Namespace) -> dict[str, Any]:
+  routes = BASE._load_json(args.routes)
+  seq346 = BASE._load_json(args.seq346)
+  binary = seq346.get("inputs", {}).get("binary")
+  if not isinstance(binary, str) or not binary:
+    raise SystemExit("seq346 binary missing")
+  token_cache = BASE.iq36_local.ensure_cached_tokens(
+      args.host, f"{args.remote_root}/cache", args.token_input_dir,
+      args.timeout_s)
+  run = (
+      _run_decode(args, binary, str(token_cache.get("dir")))
+      if token_cache.get("ok") is True else
+      {"returncode": 125, "stdout": "", "stderr": "token staging failed"}
+  )
+  smoke = BASE._parse_stdout_json(run)
+  source_prefix = "full_attention_layer_input_product_source"
+  consumer_prefix = "full_attention_layer_input_product_consumer_source"
+
+  checks = [
+      {
+          "name": "seq346_selected_decode_gate",
+          "pass": (
+              seq346.get("required_checks_passed") is True
+              and seq346.get("selected_next_route")
+              == "router_prompt_full_attention_layer_input_product_consumer_decode_gate"
+              and BASE._has_candidate(
+                  routes, 346,
+                  "accept_full_attention_layer_input_product_consumer_probe")
+              and BASE._has_switch(
+                  routes,
+                  "select_router_prompt_full_attention_layer_input_product_consumer_decode_gate",
+                  346)
+          ),
+      },
+      {
+          "name": "target_binary_emitted_8_token_json",
+          "pass": (
+              smoke.get("schema_version")
+              == "intel-qwen36-r2-gpu-decode-smoke-v0"
+              and run.get("returncode") in (0, 2)
+              and smoke.get("decode_continuation_output_tokens") == DECODE_TOKENS
+          ),
+          "detail": {
+              "returncode": run.get("returncode"),
+              "stdout_bytes": len(str(run.get("stdout") or "")),
+              "stderr_bytes": len(str(run.get("stderr") or "")),
+          },
+      },
+      {
+          "name": "source_counters_ready_for_8_tokens",
+          "pass": _counter_ready(smoke, source_prefix),
+      },
+      {
+          "name": "consumer_counters_ready_for_8_tokens",
+          "pass": _counter_ready(smoke, consumer_prefix),
+          "detail": {
+              "expected_layers": EXPECTED_LAYERS,
+              "expected_values": EXPECTED_VALUES,
+              "observed_layers": smoke.get(f"{consumer_prefix}_layers"),
+              "observed_values": smoke.get(f"{consumer_prefix}_values"),
+              "observed_misses": smoke.get(f"{consumer_prefix}_misses"),
+              "observed_ready": smoke.get(f"{consumer_prefix}_ready"),
+          },
+      },
+      {
+          "name": "consumer_is_cpu_shadow_free",
+          "pass": (
+              smoke.get("cpu_shadow_state_each_token_enabled") is False
+              and smoke.get("cpu_shadow_ffn_input_each_token_enabled") is False
+              and smoke.get("cpu_shadow_layer_input_layers") == 0
+              and smoke.get("cpu_shadow_attention_output_layers") == 0
+          ),
+      },
+      {
+          "name": "greedy_decode_preserved_no_speed_claim",
+          "pass": (
+              smoke.get("top1_matches_native") is True
+              and smoke.get("top1_match_count") == DECODE_TOKENS
+              and smoke.get("greedy_prefix_match_count") == DECODE_TOKENS
+              and smoke.get("speedup_claims_allowed") is False
+          ),
+          "detail": {
+              "required_checks_passed": smoke.get("required_checks_passed"),
+              "gpu_hybrid_decode_tok_s": smoke.get("gpu_hybrid_decode_tok_s"),
+          },
+      },
+  ]
+  required = all(bool(row.get("pass")) for row in checks)
+  return {
+      "schema_version": SCHEMA_VERSION,
+      "workstream": WORKSTREAM,
+      "inputs": {
+          "routes": BASE._rel(args.routes),
+          "seq346_probe": BASE._rel(args.seq346),
+          "token_input_dir": BASE._rel(args.token_input_dir),
+          "host": args.host,
+          "model": args.model,
+          "binary": binary,
+      },
+      "token_cache": {
+          "ok": token_cache.get("ok"),
+          "hit": token_cache.get("hit"),
+          "key": token_cache.get("key"),
+          "dir": token_cache.get("dir"),
+      },
+      "decode_run": {
+          "cmd": run.get("cmd"),
+          "returncode": run.get("returncode"),
+          "stdout_bytes": len(str(run.get("stdout") or "")),
+          "stderr_bytes": len(str(run.get("stderr") or "")),
+      },
+      "smoke_summary": BASE._summary(smoke),
+      "counter_expectation": {
+          "producer_layers": PRODUCER_LAYERS,
+          "decode_tokens": DECODE_TOKENS,
+          "hidden_size": HIDDEN_SIZE,
+          "expected_layers": EXPECTED_LAYERS,
+          "expected_values": EXPECTED_VALUES,
+      },
+      "checks": checks,
+      "required_checks_passed": required,
+      "decode_correctness_passed": required,
+      "router_distribution_allowed": required,
+      "speedup_claims_allowed": False,
+      "disposition": (
+          "accept_full_attention_layer_input_product_consumer_decode_gate"
+          if required else
+          "reject_full_attention_layer_input_product_consumer_decode_gate"
+      ),
+      "selected_next_route": (
+          "router_prompt_full_attention_layer_input_product_consumer_router_distribution_gate"
+          if required else
+          "router_prompt_full_attention_layer_input_product_consumer_decode_fix_gate"
+      ),
+      "next_route_reason": (
+          "The product-owned layer-input source and consumer are stable across "
+          "the 8-token decode row and preserve greedy correctness. Router "
+          "math/code distribution rows are now admissible."
+          if required else
+          "The 8-token layer-input consumer decode gate failed; fix source "
+          "correctness before router distribution rows."
+      ),
+  }
+
+
+def write_outputs(metrics: dict[str, Any], out_dir: Path) -> None:
+  out_dir.mkdir(parents=True, exist_ok=True)
+  (out_dir / "metrics.json").write_text(
+      json.dumps(metrics, indent=2, sort_keys=True) + "\n",
+      encoding="utf-8")
+  failed = [row["name"] for row in metrics["checks"] if not row.get("pass")]
+  summary = metrics["smoke_summary"]
+  lines = [
+      "# Router Full-Attention Layer-Input Product Consumer Decode Gate",
+      "",
+      f"- required_checks_passed: `{str(metrics['required_checks_passed']).lower()}`",
+      f"- disposition: `{metrics['disposition']}`",
+      f"- selected_next_route: `{metrics['selected_next_route']}`",
+      f"- router_distribution_allowed: `{str(metrics['router_distribution_allowed']).lower()}`",
+      f"- source counters: `{summary.get('full_attention_layer_input_product_source_layers')}` / `{summary.get('full_attention_layer_input_product_source_values')}` / `{summary.get('full_attention_layer_input_product_source_misses')}`",
+      f"- consumer counters: `{summary.get('full_attention_layer_input_product_consumer_source_layers')}` / `{summary.get('full_attention_layer_input_product_consumer_source_values')}` / `{summary.get('full_attention_layer_input_product_consumer_source_misses')}`",
+      f"- top1 match count: `{summary.get('top1_match_count')}`",
+      f"- failed_checks: `{failed}`",
+      "",
+      metrics["next_route_reason"],
+      "",
+      "This is an 8-token decode/correctness gate. It does not claim speed.",
+      "",
+  ]
+  (out_dir / "SUMMARY.md").write_text("\n".join(lines), encoding="utf-8")
+
+
+def parse_args() -> argparse.Namespace:
+  parser = argparse.ArgumentParser(description=__doc__)
+  parser.add_argument("--routes", type=Path, default=DEFAULT_ROUTES)
+  parser.add_argument("--seq346", type=Path, default=DEFAULT_SEQ346)
+  parser.add_argument("--token-input-dir", type=Path, default=DEFAULT_TOKEN_INPUT_DIR)
+  parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
+  parser.add_argument("--target", "--host", dest="host", metavar="TARGET", default=DEFAULT_HOST)
+  parser.add_argument("--model", default=DEFAULT_MODEL)
+  parser.add_argument("--env-script", default=DEFAULT_ENV_SCRIPT)
+  parser.add_argument("--staging-root", "--remote-root", dest="remote_root", metavar="PATH", default=DEFAULT_REMOTE_ROOT)
+  parser.add_argument("--timeout-s", type=int, default=900)
+  return parser.parse_args()
+
+
+def main() -> int:
+  args = parse_args()
+  metrics = compute(args)
+  write_outputs(metrics, args.out_dir)
+  print(json.dumps({
+      "decode_correctness_passed": metrics["decode_correctness_passed"],
+      "disposition": metrics["disposition"],
+      "out_dir": BASE._rel(args.out_dir),
+      "required_checks_passed": metrics["required_checks_passed"],
+      "selected_next_route": metrics["selected_next_route"],
+  }, sort_keys=True))
+  return 0 if metrics["required_checks_passed"] else 1
+
+
+if __name__ == "__main__":
+  raise SystemExit(main())

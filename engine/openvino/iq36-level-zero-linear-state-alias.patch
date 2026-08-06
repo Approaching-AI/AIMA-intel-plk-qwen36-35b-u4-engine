@@ -1,0 +1,61 @@
+diff --git a/src/plugins/intel_gpu/src/graph/impls/cpu/assign.cpp b/src/plugins/intel_gpu/src/graph/impls/cpu/assign.cpp
+index aebdcb99..2eff7262 100644
+--- a/src/plugins/intel_gpu/src/graph/impls/cpu/assign.cpp
++++ b/src/plugins/intel_gpu/src/graph/impls/cpu/assign.cpp
+@@ -3,9 +3,13 @@
+ //
+ 
+ #include "assign_inst.h"
++#include "intel_gpu/runtime/memory_caps.hpp"
+ #include "registry/implementation_map.hpp"
+ #include "register.hpp"
+ 
++#include <cstdlib>
++#include <string>
++
+ namespace cldnn {
+ namespace cpu {
+ 
+@@ -51,10 +55,41 @@ struct assign_impl : public typed_primitive_impl<assign> {
+                         " assign output layout: ", instance.get_output_layout().to_short_string());
+ 
+         auto& stream = instance.get_network().get_stream();
++        const char* iq36_alias_env = std::getenv(
++            "IQ36_GPU_ALIAS_LINEAR_STATE_ASSIGN");
++        const char* iq36_alias_scope_env = std::getenv(
++            "IQ36_GPU_ALIAS_LINEAR_STATE_ASSIGN_SCOPE");
++        const std::string iq36_alias_scope = (
++            iq36_alias_scope_env ? iq36_alias_scope_env : "all");
++        const bool iq36_conv_state =
++            variable_id.find("cache_params.past.conv.") != std::string::npos;
++        const bool iq36_ssm_state =
++            variable_id.find("cache_params.past.ssm.") != std::string::npos;
++        const bool iq36_scope_matches =
++            iq36_alias_scope == "all" ||
++            (iq36_alias_scope == "conv" && iq36_conv_state) ||
++            (iq36_alias_scope == "ssm" && iq36_ssm_state);
++        const bool iq36_alias = (
++            iq36_alias_env != nullptr && iq36_alias_env[0] != '\0' &&
++            iq36_alias_env[0] != '0' &&
++            (iq36_conv_state || iq36_ssm_state) && iq36_scope_matches &&
++            stream.get_queue_type() == QueueTypes::in_order &&
++            memory_capabilities::is_usm_type(
++                instance.input_memory().get_allocation_type()));
++
++        if (iq36_alias) {
++            auto input_memory = instance.input_memory_ptr();
++            variable.set_memory(input_memory,
++                                instance.get_output_layout());
++            variable.set();
++            return stream.aggregate_events(events, events.size() > 1);
++        }
+ 
+         stream.wait_for_events(events);
+ 
+-        const auto ev_set_memory = variable.get_memory()->copy_from(stream, instance.input_memory(), 0, 0, variable.get_layout().bytes_count(), true);
++        const auto ev_set_memory = variable.get_memory()->copy_from(
++            stream, instance.input_memory(), 0, 0,
++            variable.get_layout().bytes_count(), true);
+         variable.set();
+ 
+         return ev_set_memory;

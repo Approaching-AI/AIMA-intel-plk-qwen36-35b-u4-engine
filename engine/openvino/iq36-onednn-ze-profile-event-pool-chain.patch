@@ -1,0 +1,81 @@
+diff --git a/src/xpu/ze/stream_impl.cpp b/src/xpu/ze/stream_impl.cpp
+index 5ca18728a8..70ac96d3cf 100644
+--- a/src/xpu/ze/stream_impl.cpp
++++ b/src/xpu/ze/stream_impl.cpp
+@@ -53,12 +53,14 @@ status_t stream_impl_t::init(
+         event_pool_desc.flags = ZE_EVENT_POOL_FLAG_HOST_VISIBLE;
+         if (is_profiling_enabled())
+             event_pool_desc.flags |= ZE_EVENT_POOL_FLAG_KERNEL_TIMESTAMP;
+-        // Note: 16K number is taken randomly as big enough to fit mode=F perf
+-        // validation or a single model profiling.
+-        event_pool_desc.count = 16 * 1024;
++        event_pool_desc.count = event_pool_capacity;
+ 
++        ze_event_pool_handle_t event_pool = nullptr;
+         CHECK(ze::zeEventPoolCreate(
+-                context, &event_pool_desc, 0, nullptr, &event_pool_.unwrap()));
++                context, &event_pool_desc, 0, nullptr, &event_pool));
++        event_pool_context_ = context;
++        event_pool_flags_ = event_pool_desc.flags;
++        event_pools_.emplace_back(event_pool);
+     }
+ 
+     return status::success;
+@@ -91,17 +93,31 @@ ze_event_handle_t stream_impl_t::get_output_event() const {
+ }
+ 
+ ze_event_handle_t stream_impl_t::create_event() {
+-    if (!event_pool_) return xpu::ze::wrapper_t<ze_event_handle_t>();
++    if (event_pools_.empty()) return xpu::ze::wrapper_t<ze_event_handle_t>();
++
++    const uint32_t event_index
++            = static_cast<uint32_t>(events_.size() % event_pool_capacity);
++    if (event_index == 0 && !events_.empty()) {
++        ze_event_pool_desc_t event_pool_desc {};
++        event_pool_desc.stype = ZE_STRUCTURE_TYPE_EVENT_POOL_DESC;
++        event_pool_desc.flags = event_pool_flags_;
++        event_pool_desc.count = event_pool_capacity;
++        ze_event_pool_handle_t event_pool = nullptr;
++        auto st = ze::zeEventPoolCreate(event_pool_context_, &event_pool_desc, 0,
++                nullptr, &event_pool);
++        if (st != status::success) return nullptr;
++        event_pools_.emplace_back(event_pool);
++    }
+ 
+     ze_event_desc_t event_desc = {};
+     event_desc.stype = ZE_STRUCTURE_TYPE_EVENT_DESC;
+     event_desc.pNext = nullptr;
+-    event_desc.index = static_cast<uint32_t>(events_.size());
++    event_desc.index = event_index;
+     event_desc.signal = ZE_EVENT_SCOPE_FLAG_HOST;
+     event_desc.wait = ZE_EVENT_SCOPE_FLAG_HOST;
+ 
+     ze_event_handle_t event;
+-    auto st = ze::zeEventCreate(event_pool_, &event_desc, &event);
++    auto st = ze::zeEventCreate(event_pools_.back(), &event_desc, &event);
+     if (st != status::success) return nullptr;
+ 
+     events_.emplace_back(event);
+diff --git a/src/xpu/ze/stream_impl.hpp b/src/xpu/ze/stream_impl.hpp
+index d13270a8ff..52b0a72dd1 100644
+--- a/src/xpu/ze/stream_impl.hpp
++++ b/src/xpu/ze/stream_impl.hpp
+@@ -67,11 +67,14 @@ public:
+             unsigned *flags, ze_command_list_handle_t list, bool profiling);
+ 
+ private:
++    static constexpr uint32_t event_pool_capacity = 16 * 1024;
++
+     xpu::ze::wrapper_t<ze_command_list_handle_t> list_;
+-    // TODO: `event_pool_` seems to belong to `ctx_` as events can't be created
+-    // in multithreaded scenario and having a thread_local event pool should
+-    // address it.
+-    xpu::ze::wrapper_t<ze_event_pool_handle_t> event_pool_;
++    // TODO: event pools seem to belong to `ctx_` as events can't be created in
++    // a multithreaded scenario and thread-local pools should address it.
++    ze_context_handle_t event_pool_context_ = nullptr;
++    ze_event_pool_flags_t event_pool_flags_ = 0;
++    std::list<xpu::ze::wrapper_t<ze_event_pool_handle_t>> event_pools_;
+     // TODO: additionally, the management of event should be probably done in
+     // `event_t` struct as well and not stored in the stream as a list. However,
+     // it seems there's a challenge to keep track of event lifetime if it's

@@ -1,0 +1,16 @@
+# Exact direct and transitive runtime set used by the bound HTTP evidence.
+# The four OpenVINO wheels must come from the verified 90214e runtime bundle;
+# the public 2026.2.0 final OpenVINO wheel is a different source commit.
+attrs==26.1.0
+h11==0.16.0
+jsonschema==4.26.0
+jsonschema-specifications==2025.9.1
+numpy==2.4.4
+openvino==2026.2.0rc2
+openvino-genai==2026.2.0.0rc2
+openvino-telemetry==2025.2.0
+openvino-tokenizers==2026.2.0.0rc2
+pip==26.2.1
+referencing==0.37.0
+rpds-py==2026.6.3
+typing-extensions==4.15.0

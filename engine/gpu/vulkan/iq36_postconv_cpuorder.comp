@@ -1,0 +1,83 @@
+#version 450
+
+#extension GL_ARB_gpu_shader_fp64 : require
+#extension GL_EXT_spirv_intrinsics : require
+
+layout(local_size_x = 128, local_size_y = 1, local_size_z = 1) in;
+
+layout(binding = 0) readonly buffer ConvOutputRaw { float conv_output_raw[]; };
+layout(binding = 1) buffer QOutput { float q_output[]; };
+layout(binding = 2) buffer KOutput { float k_output[]; };
+layout(binding = 3) buffer VOutput { float v_output[]; };
+
+layout(push_constant) uniform PushConstants { float norm_epsilon; } params;
+
+shared float head_values[128];
+shared float head_scale;
+
+spirv_instruction(set = "GLSL.std.450", id = 27)
+double Iq36ExpF64(double value);
+
+precise float CpuSigmoidSilu(float value) {
+  precise double x = double(value);
+  precise double exp_x = Iq36ExpF64(x);
+  precise double exp_neg_x = Iq36ExpF64(-x);
+  precise double denominator;
+  precise double sigmoid;
+  if (x >= 0.0) {
+    denominator = 1.0 + exp_neg_x;
+    sigmoid = 1.0 / denominator;
+  } else {
+    denominator = 1.0 + exp_x;
+    sigmoid = exp_x / denominator;
+  }
+  precise float sigmoid_f32 = float(sigmoid);
+  precise float silu = value * sigmoid_f32;
+  return silu;
+}
+
+void main() {
+  const uint group = gl_WorkGroupID.x;
+  const uint lane = gl_LocalInvocationID.x;
+  if (group >= 64U) {
+    return;
+  }
+
+  uint source_base;
+  if (group < 16U) {
+    source_base = group * 128U;
+  } else if (group < 32U) {
+    source_base = 2048U + (group - 16U) * 128U;
+  } else {
+    source_base = 4096U + (group - 32U) * 128U;
+  }
+
+  precise float silu = CpuSigmoidSilu(conv_output_raw[source_base + lane]);
+  if (group >= 32U) {
+    v_output[(group - 32U) * 128U + lane] = silu;
+    return;
+  }
+
+  head_values[lane] = silu;
+  barrier();
+  if (lane == 0U) {
+    precise double sum = 0.0;
+    for (uint i = 0U; i < 128U; ++i) {
+      precise double value = double(head_values[i]);
+      precise double square = value * value;
+      sum = sum + square;
+    }
+    precise float sum_f32 = float(sum);
+    precise float root = sqrt(sum_f32);
+    precise float denominator = max(root, params.norm_epsilon);
+    head_scale = 1.0 / denominator;
+  }
+  barrier();
+
+  precise float normalized = silu * head_scale;
+  if (group < 16U) {
+    q_output[group * 128U + lane] = normalized;
+  } else {
+    k_output[(group - 16U) * 128U + lane] = normalized;
+  }
+}

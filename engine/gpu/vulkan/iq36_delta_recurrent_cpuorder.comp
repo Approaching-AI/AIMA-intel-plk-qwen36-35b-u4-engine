@@ -1,0 +1,82 @@
+#version 450
+
+layout(local_size_x = 128, local_size_y = 1, local_size_z = 1) in;
+
+layout(binding = 0) readonly buffer QInput { float q_input[]; };
+layout(binding = 1) readonly buffer KInput { float k_input[]; };
+layout(binding = 2) readonly buffer VInput { float v_input[]; };
+layout(binding = 3) readonly buffer DecayInput { float decay_input[]; };
+layout(binding = 4) readonly buffer BetaInput { float beta_input[]; };
+layout(binding = 5) readonly buffer StateInput { float state_input[]; };
+layout(binding = 6) readonly buffer ZSiluInput { float z_silu_input[]; };
+layout(binding = 7) readonly buffer NormWeightInput { float norm_weight_input[]; };
+layout(binding = 8) buffer AttentionOutput { float attention_output[]; };
+layout(binding = 9) buffer StateOutput { float state_output[]; };
+layout(binding = 10) buffer FinalOutput { float final_output[]; };
+
+layout(push_constant) uniform PushConstants {
+  float norm_epsilon;
+  float attention_scale;
+} params;
+
+shared float head_attention[128];
+shared float head_norm_scale;
+
+void main() {
+  const uint value_head = gl_WorkGroupID.x;
+  const uint row = gl_LocalInvocationID.x;
+  if (value_head >= 32U) {
+    return;
+  }
+
+  const uint query_head = value_head % 16U;
+  const uint q_base = query_head * 128U;
+  const uint value_base = value_head * 128U;
+  const uint state_base = value_head * 16384U + row * 128U;
+
+  precise float sum_k = 0.0;
+  for (uint col = 0U; col < 128U; ++col) {
+    precise float decayed =
+        state_input[state_base + col] * decay_input[value_head];
+    state_output[state_base + col] = decayed;
+    precise float product = decayed * k_input[q_base + col];
+    sum_k = sum_k + product;
+  }
+  precise float difference = v_input[value_base + row] - sum_k;
+  precise float delta = difference * beta_input[value_head];
+
+  for (uint col = 0U; col < 128U; ++col) {
+    precise float update = k_input[q_base + col] * delta;
+    precise float updated = state_output[state_base + col] + update;
+    state_output[state_base + col] = updated;
+  }
+
+  precise float sum_q = 0.0;
+  for (uint col = 0U; col < 128U; ++col) {
+    precise float product =
+        state_output[state_base + col] * q_input[q_base + col];
+    sum_q = sum_q + product;
+  }
+  precise float attention = sum_q * params.attention_scale;
+  attention_output[value_base + row] = attention;
+  head_attention[row] = attention;
+  barrier();
+
+  if (row == 0U) {
+    precise float sum_squares = 0.0;
+    for (uint i = 0U; i < 128U; ++i) {
+      precise float square = head_attention[i] * head_attention[i];
+      sum_squares = sum_squares + square;
+    }
+    precise float mean_square = sum_squares / 128.0;
+    precise float with_epsilon = mean_square + params.norm_epsilon;
+    precise float root = sqrt(with_epsilon);
+    head_norm_scale = 1.0 / root;
+  }
+  barrier();
+
+  precise float normalized = attention * head_norm_scale;
+  precise float weighted = normalized * norm_weight_input[row];
+  precise float final_value = weighted * z_silu_input[value_base + row];
+  final_output[value_base + row] = final_value;
+}

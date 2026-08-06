@@ -1,0 +1,51 @@
+diff --git a/src/plugins/intel_gpu/src/graph/impls/cpu/assign.cpp b/src/plugins/intel_gpu/src/graph/impls/cpu/assign.cpp
+index aebdcb99..1bf2d2e5 100644
+--- a/src/plugins/intel_gpu/src/graph/impls/cpu/assign.cpp
++++ b/src/plugins/intel_gpu/src/graph/impls/cpu/assign.cpp
+@@ -27,6 +27,11 @@ struct assign_impl : public typed_primitive_impl<assign> {
+         set_node_params(outer);
+     }
+ 
++    // assign's execute_impl runs memcpy from the input buffer into the variable's memory.
++    // It does not access the input on the host side,
++    // so the input primitive does not need to allocate its output in lockable (usm_host) memory.
++    bool requires_lockable_input() const override { return false; }
++
+     void set_node_params(const program_node& arg) override {
+         OPENVINO_ASSERT(arg.is_type<assign>());
+         const auto& node = arg.as<assign>();
+diff --git a/src/plugins/intel_gpu/src/graph/include/primitive_inst.h b/src/plugins/intel_gpu/src/graph/include/primitive_inst.h
+index d67f2fce..1992bab3 100644
+--- a/src/plugins/intel_gpu/src/graph/include/primitive_inst.h
++++ b/src/plugins/intel_gpu/src/graph/include/primitive_inst.h
+@@ -81,6 +81,13 @@ struct primitive_impl {
+     // class typed_primitive_gpu_impl override this with return false;
+     virtual bool is_cpu() const { return true; }
+     virtual bool is_onednn() const { return false; }
++
++    // Whether this impl needs its inputs to be in host-accessible (lockable) memory.
++    // Defaults to is_cpu(), because CPU impls typically read/write tensor data from the host.
++    // Impls whose execute path only performs GPU-side USM operations (e.g. an enqueue_memcpy
++    // between USM buffers) or that never touch tensor data (e.g. shape_of) should override
++    // this to return false so their input producers are not forced to allocate lockable memory.
++    virtual bool requires_lockable_input() const { return is_cpu(); }
+     virtual void init_kernels(const kernels_cache& kernels_cache, const kernel_impl_params& params) = 0;
+     virtual void init_by_cached_kernels(const kernels_cache&, std::vector<std::string>& cached_kernel_ids) {}
+     virtual std::vector<std::string> get_cached_kernel_ids(const kernels_cache&) { return {}; }
+diff --git a/src/plugins/intel_gpu/src/graph/primitive_inst.cpp b/src/plugins/intel_gpu/src/graph/primitive_inst.cpp
+index 95cb7470..01d06fc5 100644
+--- a/src/plugins/intel_gpu/src/graph/primitive_inst.cpp
++++ b/src/plugins/intel_gpu/src/graph/primitive_inst.cpp
+@@ -135,7 +135,11 @@ bool has_cpu_user_not_shape_of(const program_node* user) {
+         return false;
+     }
+     if (auto impl = user->get_selected_impl())
+-        return impl->is_cpu() && !user->is_type<shape_of>();
++        // Use requires_lockable_input() rather than is_cpu() directly. Some impls are
++        // registered as CPU but do not actually access their inputs from the host
++        // (e.g. assign, which only enqueues USM memcpy).
++        // Those impls opt out of forcing their producer into lockable memory.
++        return impl->requires_lockable_input() && !user->is_type<shape_of>();
+     return false;
+ }
+ 

@@ -1,0 +1,72 @@
+diff --git a/src/plugins/intel_gpu/src/plugin/transformations/fc_horizontal_fusion.cpp b/src/plugins/intel_gpu/src/plugin/transformations/fc_horizontal_fusion.cpp
+index e28f95e33a2..48ec4aeaf61 100644
+--- a/src/plugins/intel_gpu/src/plugin/transformations/fc_horizontal_fusion.cpp
++++ b/src/plugins/intel_gpu/src/plugin/transformations/fc_horizontal_fusion.cpp
+@@ -30,6 +30,16 @@ namespace {
+ using CompressedFC = op::FullyConnectedCompressed;
+ using CompressedFCVector = std::vector<std::shared_ptr<CompressedFC>>;
+ 
++bool fixed_m1024_scope_enabled() {
++    const char* value = std::getenv("IQ36_FIXED_FC_MANAGER_SCOPE");
++    return value && std::string(value) == "m1024";
++}
++
++bool router_shared_triple_enabled() {
++    const char* value = std::getenv("IQ36_ROUTER_SHARED_TRIPLE");
++    return value && std::string(value) == "1";
++}
++
+ CompressedFCVector get_compressed_fc_users(const std::shared_ptr<Node>& input) {
+     CompressedFCVector candidates;
+     for (const auto& user : input->get_users()) {
+@@ -43,11 +53,10 @@ CompressedFCVector get_compressed_fc_users(const std::shared_ptr<Node>& input) {
+ 
+ CompressedFCVector get_locked_router_shared_fanout(const std::shared_ptr<Node>& input) {
+     auto candidates = get_compressed_fc_users(input);
+-    const char* scope_value = std::getenv("IQ36_FIXED_FC_MANAGER_SCOPE");
+-    if (!scope_value || std::string(scope_value) != "m1024")
++    if (fixed_m1024_scope_enabled() == router_shared_triple_enabled())
+         return {};
+ 
+     // The locked fanout has four K=2048 FCs with N=[1, 512, 512, 256].
+-    // Keep the scalar shared-expert gate and N=256 router independent;
+-    // fuse only the two N=512 bulk projections.
++    // The N=256 router stays independent. m1024 fuses only the two N=512
++    // projections; router-shared fuses N=[1,512,512] with the stock provider.
+     if (candidates.size() != 4)
+@@ -82,14 +91,19 @@ CompressedFCVector get_horizontal_fusion_candidates(const std::shared_ptr<Node>&
+ 
+     CompressedFCVector shared_expert_candidates;
+     for (const auto& fc : locked_fanout) {
+-        const auto shape = fc->get_input_shape(1);
+-        if (shape[0] == 512)
++        const auto n = fc->get_input_shape(1)[0];
++        if ((router_shared_triple_enabled() && n != 256) ||
++            (fixed_m1024_scope_enabled() && n == 512)) {
+             shared_expert_candidates.push_back(fc);
++        }
+     }
+     return shared_expert_candidates;
+ }
+ 
+ void expand_locked_zero_points_to_u8(const std::shared_ptr<Node>& input) {
++    if (!fixed_m1024_scope_enabled())
++        return;
++
+     for (const auto& fc : get_locked_router_shared_fanout(input)) {
+         if (fc->get_input_shape(1)[0] != 512)
+             continue;
+@@ -164,8 +178,11 @@ FullyConnectedHorizontalFusion::FullyConnectedHorizontalFusion(bool fuse_mlp_swi
+             }
+             user_fc_count++;
+         }
+-        const size_t required_fcs =
+-            get_locked_router_shared_fanout(input).empty() ? min_num_fcs_to_fuse : 2;
++        size_t required_fcs = min_num_fcs_to_fuse;
++        if (!get_locked_router_shared_fanout(input).empty()) {
++            required_fcs =
++                router_shared_triple_enabled() ? 3 : 2;
++        }
+         return (user_fc_count >= required_fcs) && (user_fc_count <= max_num_fcs_to_fuse) &&
+                (nodes_with_bias == static_cast<int32_t>(user_fc_count) || nodes_with_bias == 0) &&
+                (nodes_with_zp == static_cast<int32_t>(user_fc_count) || nodes_with_zp == 0);

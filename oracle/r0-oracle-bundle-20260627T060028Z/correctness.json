@@ -1,0 +1,29 @@
+{
+  "checks": [
+    {
+      "name": "prompt_rows_match_capture_spec",
+      "pass": true
+    },
+    {
+      "input_rows": 524,
+      "name": "boundary_rows_match_capture_spec",
+      "output_rows": 524,
+      "pass": true
+    },
+    {
+      "name": "prompt_edge_rows_present",
+      "pass": true
+    },
+    {
+      "distribution_position_count": 12744,
+      "name": "teacher_forced_distribution_positions_present",
+      "pass": true
+    }
+  ],
+  "full_acceptance_bundle": true,
+  "gate": "r0_oracle_full_bundle",
+  "r0_oracle_gate_closed": true,
+  "required_checks_passed": true,
+  "schema_version": "intel-qwen36-r0-oracle-full-bundle-v0",
+  "workstream": "intel-qwen36-35b-a3b-gguf-q4km"
+}

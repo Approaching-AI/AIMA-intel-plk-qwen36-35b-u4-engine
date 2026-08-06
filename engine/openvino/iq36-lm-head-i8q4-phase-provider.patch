@@ -1,0 +1,1421 @@
+diff --git a/src/plugins/intel_gpu/src/graph/registry/fully_connected_impls.cpp b/src/plugins/intel_gpu/src/graph/registry/fully_connected_impls.cpp
+--- a/src/plugins/intel_gpu/src/graph/registry/fully_connected_impls.cpp
++++ b/src/plugins/intel_gpu/src/graph/registry/fully_connected_impls.cpp
+@@ -5,6 +5,7 @@
+ #include "primitive_inst.h"
+ #include "registry.hpp"
+ #include "intel_gpu/primitives/fully_connected.hpp"
++#include "impls/ocl/iq36_lm_head_i8q4.hpp"
+ #include "impls/ocl/iq36_fixed_fc.hpp"
+ 
+ 
+@@ -18,6 +19,7 @@ using namespace cldnn;
+ 
+ const std::vector<std::shared_ptr<cldnn::ImplementationManager>>& Registry<fully_connected>::get_implementations() {
+     static const std::vector<std::shared_ptr<ImplementationManager>> impls = {
++        OV_GPU_CREATE_INSTANCE_OCL(ocl::IQ36LMHeadI8Q4ImplementationManager)
+         OV_GPU_CREATE_INSTANCE_OCL(ocl::IQ36FixedFCImplementationManager)
+         OV_GPU_CREATE_INSTANCE_ONEDNN(onednn::FullyConnectedImplementationManager, shape_types::static_shape)
+         OV_GPU_GET_INSTANCE_OCL(fully_connected, shape_types::static_shape)
+diff --git a/src/plugins/intel_gpu/src/graph/impls/ocl/iq36_lm_head_i8q4.hpp b/src/plugins/intel_gpu/src/graph/impls/ocl/iq36_lm_head_i8q4.hpp
+new file mode 100644
+--- /dev/null
++++ b/src/plugins/intel_gpu/src/graph/impls/ocl/iq36_lm_head_i8q4.hpp
+@@ -0,0 +1,26 @@
++// Copyright (C) 2018-2026 Intel Corporation
++// SPDX-License-Identifier: Apache-2.0
++//
++
++#pragma once
++
++#include "registry/implementation_manager.hpp"
++
++namespace cldnn {
++namespace ocl {
++
++class IQ36LMHeadI8Q4ImplementationManager : public ImplementationManager {
++public:
++    IQ36LMHeadI8Q4ImplementationManager();
++
++    OV_GPU_PRIMITIVE_IMPL("ocl::IQ36LMHeadI8Q4ImplementationManager")
++
++    std::unique_ptr<primitive_impl> create_impl(const program_node& node,
++                                                const kernel_impl_params& params) const override;
++    bool validate_impl(const program_node& node) const override;
++    bool support_shapes(const kernel_impl_params& params) const override;
++    in_out_fmts_t query_formats(const program_node& node) const override;
++};
++
++}  // namespace ocl
++}  // namespace cldnn
+diff --git a/src/plugins/intel_gpu/src/graph/impls/ocl/iq36_lm_head_i8q4.cpp b/src/plugins/intel_gpu/src/graph/impls/ocl/iq36_lm_head_i8q4.cpp
+new file mode 100644
+--- /dev/null
++++ b/src/plugins/intel_gpu/src/graph/impls/ocl/iq36_lm_head_i8q4.cpp
+@@ -0,0 +1,1366 @@
++// Copyright (C) 2018-2026 Intel Corporation
++// SPDX-License-Identifier: Apache-2.0
++//
++
++#include "iq36_lm_head_i8q4.hpp"
++
++#include "dynamic_quantize_inst.h"
++#include "fully_connected_inst.h"
++#include "primitive_base.hpp"
++
++#include <algorithm>
++#include <cmath>
++#include <cstdlib>
++#include <cstring>
++#include <fstream>
++#include <mutex>
++#include <string>
++#include <vector>
++
++namespace cldnn {
++namespace ocl {
++namespace {
++
++constexpr size_t kRows = 248320;
++constexpr size_t kColumns = 2048;
++constexpr size_t kRowsPerStripe = 8;
++constexpr size_t kGroupsPerRow = 16;
++constexpr size_t kCodeBytesPerGroupStripe = 512;
++constexpr size_t kCodeBytesPerStripe = 8192;
++constexpr size_t kStripeBytes = 8224;
++constexpr size_t kPackedBytes = (kRows / kRowsPerStripe) * kStripeBytes;
++constexpr size_t kTopK = 8;
++constexpr size_t kRowsPerTopBlock = 256;
++constexpr size_t kTopBlockCount = kRows / kRowsPerTopBlock;
++constexpr size_t kBinaryCodeBytesPerStripe = 2048;
++constexpr size_t kBinaryStripeBytes = 2128;
++constexpr size_t kBinaryPackedBytes =
++    (kRows / kRowsPerStripe) * kBinaryStripeBytes;
++constexpr size_t kBinaryLocalTopK = 12;
++constexpr size_t kBinaryCorrectionRows = kTopBlockCount * kBinaryLocalTopK;
++constexpr uint32_t kTargetIpVersion = 0x07800004;
++constexpr uint32_t kTargetEuCount = 96;
++constexpr char kNodeId[] =
++    "fullyconnectedcompressed:__module.model.lm_head/ov_ext::linear/MatMul";
++constexpr char kQuantizeKernelName[] = "iq36_lm_head_q8_group256_f16";
++constexpr char kMatvecKernelName[] = "iq36_lm_head_i8q4_rowstripe8_matvec_topk8_f16";
++constexpr char kOutputSelectKernelName[] = "iq36_lm_head_output_topk8_f16";
++constexpr char kMergeKernelName[] = "iq36_lm_head_topk8_merge_f32";
++constexpr char kCorrectionKernelName[] = "iq36_lm_head_i8_exact_topk8_correction_f16";
++constexpr char kDirectCorrectionKernelName[] =
++    "iq36_lm_head_i8_direct_topk8_correction_f16";
++constexpr char kBinaryQuantizeKernelName[] =
++    "iq36_lm_head_q8_group256_f16_sums";
++constexpr char kBinaryMatvecKernelName[] =
++    "iq36_lm_head_i8q1_rowstripe8_matvec_local_top12_f16";
++constexpr char kBinaryCorrectionKernelName[] =
++    "iq36_lm_head_i8_exact_local_top12_correction_f16";
++
++bool binary_enabled() {
++    const char* value = std::getenv("IQ36_LM_HEAD_I8Q1");
++    return value != nullptr && std::string(value) == "1";
++}
++
++bool enabled() {
++    const char* value = std::getenv("IQ36_LM_HEAD_I8Q4");
++    return binary_enabled() || (value != nullptr && std::string(value) == "1");
++}
++
++size_t logical_size(const layout& value) {
++    if (!value.is_static())
++        return 0;
++    return value.get_linear_size();
++}
++
++void append_trace(const std::string& row);
++
++bool has_exact_static_contract(const kernel_impl_params& params) {
++    if (!enabled() || params.desc->id != kNodeId || params.output_layouts.size() != 1 ||
++        params.has_fused_primitives()) {
++        return false;
++    }
++
++    const auto desc = params.typed_desc<fully_connected>();
++    if (desc->bias.is_valid() || !desc->compressed_weights ||
++        !desc->decompression_scale.is_valid() || desc->decompression_zero_point.is_valid() ||
++        desc->decompression_zero_point_scalar.has_value() || !desc->dynamic_quantized_activation ||
++        desc->dynamic_quantized_activation_zp || desc->dynamic_quantized_precomputed_reduction ||
++        !desc->activation_scale.is_valid() || desc->activation_zero_point.is_valid() ||
++        desc->activation_precomputed_reduction.is_valid()) {
++        return false;
++    }
++
++    // activation, weights, per-row weight scale, group-256 activation scale
++    if (params.input_layouts.size() != 4)
++        return false;
++    const auto& activation = params.get_input_layout(0);
++    const auto& weights = params.get_input_layout(1);
++    const auto& weight_scales = params.get_input_layout(2);
++    const auto& activation_scales = params.get_input_layout(3);
++    const auto& output = params.get_output_layout(0);
++    if (!activation.is_static() || !weights.is_static() || !weight_scales.is_static() ||
++        !activation_scales.is_static() || !output.is_static()) {
++        return false;
++    }
++    if (activation.data_type != data_types::f16 || weights.data_type != data_types::i8 ||
++        weight_scales.data_type != data_types::f16 || activation_scales.data_type != data_types::f16 ||
++        output.data_type != data_types::f16) {
++        return false;
++    }
++    if (logical_size(activation) != kColumns || logical_size(weights) != kRows * kColumns ||
++        logical_size(weight_scales) != kRows || logical_size(activation_scales) != 0 ||
++        logical_size(output) != kRows) {
++        return false;
++    }
++    if (activation.format != format::bfyx || weights.format != format::bfyx ||
++        activation_scales.format != format::bfyx || output.format != format::bfyx) {
++        return false;
++    }
++
++    const auto& device = params.get_device_info();
++    return device.ip_version == kTargetIpVersion && device.execution_units_count == kTargetEuCount;
++}
++
++kernel_selector::kernel_data make_binary_kernel_data() {
++    kernel_selector::kernel_data data;
++    data.kernelName = kBinaryMatvecKernelName;
++    data.kernels.resize(6);
++    const std::string source = R"CLC(
++#pragma OPENCL EXTENSION cl_khr_fp16 : enable
++#pragma OPENCL EXTENSION cl_khr_subgroups : enable
++#pragma OPENCL EXTENSION cl_intel_required_subgroup_size : enable
++
++#define IQ36_ROWS 248320U
++#define IQ36_BINARY_CODE_BYTES_PER_STRIPE 2048U
++#define IQ36_BINARY_STRIPE_BYTES 2128U
++#define IQ36_BINARY_LOCAL_TOPK 12U
++#define IQ36_BINARY_CORRECTION_ROWS 11640U
++
++#if defined(IQ36_BINARY_QUANTIZE_KERNEL)
++__attribute__((reqd_work_group_size(64, 1, 1)))
++__attribute__((intel_reqd_sub_group_size(16)))
++__kernel void iq36_lm_head_q8_group256_f16_sums(
++    __global const half* input,
++    __global char* q8_qs,
++    __global float* q8_d,
++    __global int* q8_sums) {
++  const uint group = (uint)get_group_id(0);
++  const uint lane = (uint)get_local_id(0);
++  const uint base = group * 256U + lane * 4U;
++  const half4 values = vload4(0, input + base);
++  __local half maxima[64];
++  __local half quantize_scale;
++  __local int partial_sums[64];
++  maxima[lane] = fmax(fmax(fabs(values[0]), fabs(values[1])),
++                      fmax(fabs(values[2]), fabs(values[3])));
++  barrier(CLK_LOCAL_MEM_FENCE);
++  if (lane == 0U) {
++    half maximum = (half)0.00006103515625h;
++    for (uint index = 0U; index < 64U; ++index)
++      maximum = fmax(maximum, maxima[index]);
++    quantize_scale = (half)127.0h / maximum;
++    q8_d[group] = convert_float((half)1.0h / quantize_scale);
++  }
++  barrier(CLK_LOCAL_MEM_FENCE);
++  const char4 quantized = convert_char4_rte(
++      values * (half4)quantize_scale);
++  vstore4(quantized, 0, q8_qs + base);
++  partial_sums[lane] = (int)quantized.s0 + (int)quantized.s1 +
++      (int)quantized.s2 + (int)quantized.s3;
++  barrier(CLK_LOCAL_MEM_FENCE);
++  if (lane == 0U) {
++    int total = 0;
++    for (uint index = 0U; index < 64U; ++index)
++      total += partial_sums[index];
++    q8_sums[group] = total;
++  }
++}
++#endif
++
++#if defined(IQ36_BINARY_MATVEC_KERNEL)
++inline float iq36_lm_head_i8q1_rowstripe8_dot(
++    __global const uchar* packed,
++    __global const char* q8_qs,
++    __global const float* q8_d,
++    __global const int* q8_sums,
++    ulong row) {
++  const ulong row_group = row >> 3U;
++  const uint row_lane = (uint)(row & 7UL);
++  __global const uchar* stripe =
++      packed + row_group * (ulong)IQ36_BINARY_STRIPE_BYTES;
++  const float low = *(__global const float*)(
++      stripe + IQ36_BINARY_CODE_BYTES_PER_STRIPE + row_lane * 4U);
++  const float high = *(__global const float*)(
++      stripe + IQ36_BINARY_CODE_BYTES_PER_STRIPE + 32U + row_lane * 4U);
++  float scaled_sum = 0.0f;
++  for (uint group = 0U; group < 8U; ++group) {
++    int high_sum = 0;
++    for (uint chunk = 0U; chunk < 8U; ++chunk) {
++      const uchar4 codes = vload4(
++          0, stripe + (group * 8U + chunk) * 32U + row_lane * 4U);
++      __global const char* input = q8_qs + group * 256U + chunk * 32U;
++      for (uint byte = 0U; byte < 4U; ++byte) {
++        const uchar bits = codes[byte];
++        const char4 first = (char4)(
++            (char)((bits >> 0U) & 1U), (char)((bits >> 1U) & 1U),
++            (char)((bits >> 2U) & 1U), (char)((bits >> 3U) & 1U));
++        const char4 second = (char4)(
++            (char)((bits >> 4U) & 1U), (char)((bits >> 5U) & 1U),
++            (char)((bits >> 6U) & 1U), (char)((bits >> 7U) & 1U));
++        high_sum += dot(first, vload4(0, input + byte * 8U));
++        high_sum += dot(second, vload4(0, input + byte * 8U + 4U));
++      }
++    }
++    scaled_sum += (low * (float)q8_sums[group] +
++                   (high - low) * (float)high_sum) * q8_d[group];
++  }
++  const float weight_scale = vload_half(
++      0, (__global const half*)(
++          stripe + IQ36_BINARY_CODE_BYTES_PER_STRIPE + 64U +
++          row_lane * 2U));
++  return scaled_sum * weight_scale;
++}
++
++__attribute__((reqd_work_group_size(256, 1, 1)))
++__attribute__((intel_reqd_sub_group_size(16)))
++__kernel void iq36_lm_head_i8q1_rowstripe8_matvec_local_top12_f16(
++    __global const uchar* packed,
++    __global const char* q8_qs,
++    __global const float* q8_d,
++    __global const int* q8_sums,
++    __global half* output,
++    __global int* partial_top_ids) {
++  const uint row = (uint)get_global_id(0);
++  const uint lane = (uint)get_local_id(0);
++  const uint block = (uint)get_group_id(0);
++  const float full_value = row < IQ36_ROWS
++      ? iq36_lm_head_i8q1_rowstripe8_dot(
++            packed, q8_qs, q8_d, q8_sums, (ulong)row)
++      : -INFINITY;
++  const half rounded = convert_half_rte(full_value);
++  const float value = row < IQ36_ROWS ? convert_float(rounded) : -INFINITY;
++  if (row < IQ36_ROWS) output[row] = rounded;
++  __local float values[256];
++  values[lane] = value;
++  barrier(CLK_LOCAL_MEM_FENCE);
++  if (lane != 0U) return;
++  float best_values[IQ36_BINARY_LOCAL_TOPK];
++  int best_ids[IQ36_BINARY_LOCAL_TOPK];
++  for (uint index = 0U; index < IQ36_BINARY_LOCAL_TOPK; ++index) {
++    best_values[index] = -INFINITY;
++    best_ids[index] = -1;
++  }
++  const uint begin = block * 256U;
++  const uint count = min(256U, IQ36_ROWS - begin);
++  for (uint index = 0U; index < count; ++index) {
++    const float candidate = values[index];
++    uint position = 0U;
++    while (position < IQ36_BINARY_LOCAL_TOPK &&
++           (best_values[position] > candidate ||
++            (best_values[position] == candidate &&
++             best_ids[position] < (int)(begin + index)))) {
++      ++position;
++    }
++    if (position < IQ36_BINARY_LOCAL_TOPK) {
++      for (uint destination = IQ36_BINARY_LOCAL_TOPK - 1U;
++           destination > position; --destination) {
++        best_values[destination] = best_values[destination - 1U];
++        best_ids[destination] = best_ids[destination - 1U];
++      }
++      best_values[position] = candidate;
++      best_ids[position] = (int)(begin + index);
++    }
++  }
++  for (uint index = 0U; index < IQ36_BINARY_LOCAL_TOPK; ++index)
++    partial_top_ids[block * IQ36_BINARY_LOCAL_TOPK + index] = best_ids[index];
++}
++#endif
++
++#if defined(IQ36_BINARY_CORRECTION_KERNEL)
++__attribute__((reqd_work_group_size(64, 1, 1)))
++__attribute__((intel_reqd_sub_group_size(16)))
++__kernel void iq36_lm_head_i8_exact_local_top12_correction_f16(
++    __global const char* weights,
++    __global const half* weight_scales,
++    __global const char* q8_qs,
++    __global const float* q8_d,
++    __global const int* selected_ids,
++    __global half* output) {
++  const uint selected = (uint)get_group_id(0);
++  const uint lane = (uint)get_local_id(0);
++  if (selected >= IQ36_BINARY_CORRECTION_ROWS) return;
++  const int signed_row = selected_ids[selected];
++  if (signed_row < 0 || signed_row >= (int)IQ36_ROWS) return;
++  const uint row = (uint)signed_row;
++  const ulong row_base = (ulong)row * 2048UL;
++  const uint lane_base = lane * 32U;
++  int dot_sum = 0;
++  for (uint chunk = 0U; chunk < 8U; ++chunk) {
++    const uint element = lane_base + chunk * 4U;
++    dot_sum += dot(vload4(0, weights + row_base + element),
++                   vload4(0, q8_qs + element));
++  }
++  __local int partial[64];
++  __local float group_sums[8];
++  partial[lane] = dot_sum;
++  barrier(CLK_LOCAL_MEM_FENCE);
++  if (lane < 8U) {
++    int group_sum = 0;
++    for (uint contributor = 0U; contributor < 8U; ++contributor)
++      group_sum += partial[lane * 8U + contributor];
++    group_sums[lane] = (float)group_sum * q8_d[lane];
++  }
++  barrier(CLK_LOCAL_MEM_FENCE);
++  if (lane == 0U) {
++    float value = 0.0f;
++    for (uint group = 0U; group < 8U; ++group) value += group_sums[group];
++    output[row] = convert_half_rte(value * convert_float(weight_scales[row]));
++  }
++}
++#endif
++
++#if defined(IQ36_BINARY_OUTPUT_TOPK_KERNEL)
++__attribute__((reqd_work_group_size(256, 1, 1)))
++__attribute__((intel_reqd_sub_group_size(16)))
++__kernel void iq36_lm_head_output_topk8_f16(
++    __global const half* output,
++    __global int* partial_top_ids,
++    __global float* partial_top_values) {
++  const uint row = (uint)get_global_id(0);
++  const uint lane = (uint)get_local_id(0);
++  const uint block = (uint)get_group_id(0);
++  const float value = row < IQ36_ROWS
++      ? convert_float(output[row])
++      : -INFINITY;
++  __local float values[256];
++  values[lane] = value;
++  barrier(CLK_LOCAL_MEM_FENCE);
++  if (lane != 0U) return;
++  float best_values[8];
++  int best_ids[8];
++  for (uint index = 0U; index < 8U; ++index) {
++    best_values[index] = -INFINITY;
++    best_ids[index] = -1;
++  }
++  const uint begin = block * 256U;
++  const uint count = min(256U, IQ36_ROWS - begin);
++  for (uint index = 0U; index < count; ++index) {
++    const float candidate = values[index];
++    uint position = 0U;
++    while (position < 8U &&
++           (best_values[position] > candidate ||
++            (best_values[position] == candidate &&
++             best_ids[position] < (int)(begin + index)))) {
++      ++position;
++    }
++    if (position < 8U) {
++      for (uint destination = 7U; destination > position; --destination) {
++        best_values[destination] = best_values[destination - 1U];
++        best_ids[destination] = best_ids[destination - 1U];
++      }
++      best_values[position] = candidate;
++      best_ids[position] = (int)(begin + index);
++    }
++  }
++  for (uint index = 0U; index < 8U; ++index) {
++    partial_top_ids[block * 8U + index] = best_ids[index];
++    partial_top_values[block * 8U + index] = best_values[index];
++  }
++}
++#endif
++
++#if defined(IQ36_BINARY_TOPK_MERGE_KERNEL)
++__attribute__((reqd_work_group_size(256, 1, 1)))
++__kernel void iq36_lm_head_topk8_merge_f32(
++    __global const int* partial_ids,
++    __global const float* partial_values,
++    __global int* top_ids,
++    __global float* top_values) {
++  const uint lane = (uint)get_local_id(0);
++  float best_values[8];
++  int best_ids[8];
++  for (uint index = 0U; index < 8U; ++index) {
++    best_values[index] = -INFINITY;
++    best_ids[index] = -1;
++  }
++  for (uint candidate = lane; candidate < 970U * 8U; candidate += 256U) {
++    const float value = partial_values[candidate];
++    const int id = partial_ids[candidate];
++    uint position = 0U;
++    while (position < 8U &&
++           (best_values[position] > value ||
++            (best_values[position] == value && best_ids[position] < id))) {
++      ++position;
++    }
++    if (position < 8U) {
++      for (uint destination = 7U; destination > position; --destination) {
++        best_values[destination] = best_values[destination - 1U];
++        best_ids[destination] = best_ids[destination - 1U];
++      }
++      best_values[position] = value;
++      best_ids[position] = id;
++    }
++  }
++  uint head = 0U;
++  for (uint output = 0U; output < 8U; ++output) {
++    const float lane_value = head < 8U ? best_values[head] : -INFINITY;
++    const int lane_id = head < 8U ? best_ids[head] : 0x7fffffff;
++    const float maximum = work_group_reduce_max(lane_value);
++    const int winner = work_group_reduce_min(
++        lane_value == maximum ? lane_id : 0x7fffffff);
++    if (lane_id == winner) ++head;
++    if (lane == 0U) {
++      top_ids[output] = winner;
++      top_values[output] = maximum;
++    }
++  }
++}
++#endif
++
++#if defined(IQ36_BINARY_DIRECT_CORRECTION_KERNEL)
++__attribute__((reqd_work_group_size(64, 1, 1)))
++__attribute__((intel_reqd_sub_group_size(16)))
++__kernel void iq36_lm_head_i8_direct_topk8_correction_f16(
++    __global const char* weights,
++    __global const half* weight_scales,
++    __global const half* input,
++    __global const int* top_ids,
++    __global half* output) {
++  const uint selected = (uint)get_group_id(0);
++  const uint lane = (uint)get_local_id(0);
++  if (selected >= 8U) return;
++  const int signed_row = top_ids[selected];
++  if (signed_row < 0 || signed_row >= (int)IQ36_ROWS) return;
++  const uint row = (uint)signed_row;
++  const ulong row_base = (ulong)row * 2048UL;
++  const uint lane_base = lane * 32U;
++  float dot_sum = 0.0f;
++  for (uint chunk = 0U; chunk < 8U; ++chunk) {
++    const uint element = lane_base + chunk * 4U;
++    dot_sum += dot(
++        convert_float4(vload4(0, weights + row_base + element)),
++        convert_float4(vload4(0, input + element)));
++  }
++  __local float partial[64];
++  partial[lane] = dot_sum;
++  barrier(CLK_LOCAL_MEM_FENCE);
++  if (lane == 0U) {
++    float value = 0.0f;
++    for (uint contributor = 0U; contributor < 64U; ++contributor)
++      value += partial[contributor];
++    output[row] = convert_half_rte(value * convert_float(weight_scales[row]));
++  }
++}
++#endif
++)CLC";
++
++    using argument_type = kernel_selector::kernel_argument_types;
++    auto& quantize = data.kernels[0];
++    quantize.code.kernelString = std::make_shared<kernel_selector::kernel_string>();
++    quantize.code.kernelString->entry_point = kBinaryQuantizeKernelName;
++    quantize.code.kernelString->str = source;
++    quantize.code.kernelString->options =
++        "-cl-std=CL3.0 -D IQ36_BINARY_QUANTIZE_KERNEL=1";
++    quantize.code.kernelString->batch_compilation = false;
++    quantize.params.workGroups.global = {512, 1, 1};
++    quantize.params.workGroups.local = {64, 1, 1};
++    quantize.params.arguments = {
++        {argument_type::INPUT, 0},
++        {argument_type::INTERNAL_BUFFER, 0},
++        {argument_type::INTERNAL_BUFFER, 1},
++        {argument_type::INTERNAL_BUFFER, 2},
++    };
++
++    auto& matvec = data.kernels[1];
++    matvec.code.kernelString = std::make_shared<kernel_selector::kernel_string>();
++    matvec.code.kernelString->entry_point = kBinaryMatvecKernelName;
++    matvec.code.kernelString->str = source;
++    matvec.code.kernelString->options =
++        "-cl-std=CL3.0 -D IQ36_BINARY_MATVEC_KERNEL=1";
++    matvec.code.kernelString->batch_compilation = false;
++    matvec.params.workGroups.global = {kRows, 1, 1};
++    matvec.params.workGroups.local = {256, 1, 1};
++    matvec.params.arguments = {
++        {argument_type::WEIGHTS, 0},
++        {argument_type::INTERNAL_BUFFER, 0},
++        {argument_type::INTERNAL_BUFFER, 1},
++        {argument_type::INTERNAL_BUFFER, 2},
++        {argument_type::OUTPUT, 0},
++        {argument_type::INTERNAL_BUFFER, 3},
++    };
++
++    auto& correction = data.kernels[2];
++    correction.code.kernelString = std::make_shared<kernel_selector::kernel_string>();
++    correction.code.kernelString->entry_point = kBinaryCorrectionKernelName;
++    correction.code.kernelString->str = source;
++    correction.code.kernelString->options =
++        "-cl-std=CL3.0 -D IQ36_BINARY_CORRECTION_KERNEL=1";
++    correction.code.kernelString->batch_compilation = false;
++    correction.params.workGroups.global = {kBinaryCorrectionRows * 64, 1, 1};
++    correction.params.workGroups.local = {64, 1, 1};
++    correction.params.arguments = {
++        {argument_type::INPUT, 1},
++        {argument_type::INPUT, 2},
++        {argument_type::INTERNAL_BUFFER, 0},
++        {argument_type::INTERNAL_BUFFER, 1},
++        {argument_type::INTERNAL_BUFFER, 3},
++        {argument_type::OUTPUT, 0},
++    };
++
++    auto& rerank = data.kernels[3];
++    rerank.code.kernelString = std::make_shared<kernel_selector::kernel_string>();
++    rerank.code.kernelString->entry_point = kOutputSelectKernelName;
++    rerank.code.kernelString->str = source;
++    rerank.code.kernelString->options =
++        "-cl-std=CL3.0 -D IQ36_BINARY_OUTPUT_TOPK_KERNEL=1";
++    rerank.code.kernelString->batch_compilation = false;
++    rerank.params.workGroups.global = {kRows, 1, 1};
++    rerank.params.workGroups.local = {256, 1, 1};
++    rerank.params.arguments = {
++        {argument_type::OUTPUT, 0},
++        {argument_type::INTERNAL_BUFFER, 3},
++        {argument_type::INTERNAL_BUFFER, 4},
++    };
++
++    auto& merge = data.kernels[4];
++    merge.code.kernelString = std::make_shared<kernel_selector::kernel_string>();
++    merge.code.kernelString->entry_point = kMergeKernelName;
++    merge.code.kernelString->str = source;
++    merge.code.kernelString->options =
++        "-cl-std=CL3.0 -D IQ36_BINARY_TOPK_MERGE_KERNEL=1";
++    merge.code.kernelString->batch_compilation = false;
++    merge.params.workGroups.global = {256, 1, 1};
++    merge.params.workGroups.local = {256, 1, 1};
++    merge.params.arguments = {
++        {argument_type::INTERNAL_BUFFER, 3},
++        {argument_type::INTERNAL_BUFFER, 4},
++        {argument_type::INTERNAL_BUFFER, 5},
++        {argument_type::INTERNAL_BUFFER, 6},
++    };
++
++    auto& direct_correction = data.kernels[5];
++    direct_correction.code.kernelString =
++        std::make_shared<kernel_selector::kernel_string>();
++    direct_correction.code.kernelString->entry_point =
++        kDirectCorrectionKernelName;
++    direct_correction.code.kernelString->str = source;
++    direct_correction.code.kernelString->options =
++        "-cl-std=CL3.0 -D IQ36_BINARY_DIRECT_CORRECTION_KERNEL=1";
++    direct_correction.code.kernelString->batch_compilation = false;
++    direct_correction.params.workGroups.global = {kTopK * 64, 1, 1};
++    direct_correction.params.workGroups.local = {64, 1, 1};
++    direct_correction.params.arguments = {
++        {argument_type::INPUT, 1},
++        {argument_type::INPUT, 2},
++        {argument_type::INPUT, 0},
++        {argument_type::INTERNAL_BUFFER, 5},
++        {argument_type::OUTPUT, 0},
++    };
++
++    data.internalBufferDataType = kernel_selector::Datatype::UINT8;
++    data.internalBuffers.emplace_back(kColumns);
++    data.internalBuffers.emplace_back(8 * sizeof(float));
++    data.internalBuffers.emplace_back(8 * sizeof(int32_t));
++    data.internalBuffers.emplace_back(
++        kBinaryCorrectionRows * sizeof(int32_t));
++    data.internalBuffers.emplace_back(
++        kTopBlockCount * kTopK * sizeof(float));
++    data.internalBuffers.emplace_back(kTopK * sizeof(int32_t));
++    data.internalBuffers.emplace_back(kTopK * sizeof(float));
++    data.needs_sub_kernels_sync = true;
++    return data;
++}
++
++kernel_selector::kernel_data make_kernel_data() {
++    kernel_selector::kernel_data data;
++    data.kernelName = kMatvecKernelName;
++    data.kernels.resize(7);
++    const std::string source = R"CLC(
++#pragma OPENCL EXTENSION cl_khr_fp16 : enable
++#pragma OPENCL EXTENSION cl_khr_subgroups : enable
++#pragma OPENCL EXTENSION cl_intel_required_subgroup_size : enable
++
++#define IQ36_ROWS 248320U
++#define IQ36_GROUPS 16U
++#define IQ36_CODE_BYTES_PER_GROUP8 512U
++#define IQ36_CODE_BYTES_PER_STRIPE 8192U
++#define IQ36_STRIPE_BYTES 8224U
++
++#if !defined(IQ36_QUANTIZE_KERNEL) && !defined(IQ36_TOPK_MATVEC_KERNEL) && \
++    !defined(IQ36_OUTPUT_TOPK_KERNEL) && !defined(IQ36_TOPK_MERGE_KERNEL) && \
++    !defined(IQ36_CORRECTION_KERNEL) && !defined(IQ36_DIRECT_CORRECTION_KERNEL)
++#define IQ36_QUANTIZE_KERNEL 1
++#define IQ36_TOPK_MATVEC_KERNEL 1
++#define IQ36_OUTPUT_TOPK_KERNEL 1
++#define IQ36_TOPK_MERGE_KERNEL 1
++#define IQ36_CORRECTION_KERNEL 1
++#define IQ36_DIRECT_CORRECTION_KERNEL 1
++#endif
++
++#if defined(IQ36_TOPK_MATVEC_KERNEL)
++inline float iq36_lm_head_i8q4_rowstripe8_dot(
++    __global const uchar* packed,
++    __global const char* q8_qs,
++    __global const float* q8_d,
++    ulong row) {
++  const ulong row_group = row >> 3U;
++  const uint row_lane = (uint)(row & 7UL);
++  __global const uchar* stripe =
++      packed + row_group * (ulong)IQ36_STRIPE_BYTES;
++  float scaled_sum = 0.0f;
++  for (uint group = 0U; group < IQ36_GROUPS; ++group) {
++    __global const uchar* block =
++        stripe + group * IQ36_CODE_BYTES_PER_GROUP8;
++    __global const char* input = q8_qs + group * 128U;
++    int dot_sum = 0;
++    for (uint chunk = 0U; chunk < 16U; ++chunk) {
++      const uchar4 codes = vload4(
++          0, block + chunk * 32U + row_lane * 4U);
++      const char4 low = convert_char4(codes & (uchar4)(15)) - (char4)(8);
++      const char4 high = convert_char4(codes >> 4U) - (char4)(8);
++#if defined(IQ36_USE_INTEGER_DOT)
++      dot_sum += dot(low, vload4(0, input + chunk * 4U));
++      dot_sum += dot(high, vload4(0, input + 64U + chunk * 4U));
++#else
++      for (uint element = 0U; element < 4U; ++element) {
++        dot_sum += (int)low[element] * (int)input[chunk * 4U + element];
++        dot_sum += (int)high[element] *
++                   (int)input[64U + chunk * 4U + element];
++      }
++#endif
++    }
++    scaled_sum += (float)dot_sum * q8_d[group >> 1U];
++  }
++  const float weight_scale = vload_half(
++      0, (__global const half*)(
++          stripe + IQ36_CODE_BYTES_PER_STRIPE + row_lane * 2U));
++  return scaled_sum * weight_scale * 16.0f;
++}
++#endif
++
++#if defined(IQ36_QUANTIZE_KERNEL)
++__attribute__((reqd_work_group_size(64, 1, 1)))
++__attribute__((intel_reqd_sub_group_size(16)))
++__kernel void iq36_lm_head_q8_group256_f16(
++    __global const half* input,
++    __global char* q8_qs,
++    __global float* q8_d) {
++  const uint group = (uint)get_group_id(0);
++  const uint lane = (uint)get_local_id(0);
++  const uint base = group * 256U + lane * 4U;
++  const half4 values = vload4(0, input + base);
++  __local half maxima[64];
++  __local half quantize_scale;
++  maxima[lane] = fmax(fmax(fabs(values[0]), fabs(values[1])),
++                      fmax(fabs(values[2]), fabs(values[3])));
++  barrier(CLK_LOCAL_MEM_FENCE);
++  if (lane == 0U) {
++    half maximum = (half)0.00006103515625h;
++    for (uint index = 0U; index < 64U; ++index)
++      maximum = fmax(maximum, maxima[index]);
++    quantize_scale = (half)127.0h / maximum;
++    q8_d[group] = convert_float((half)1.0h / quantize_scale);
++  }
++  barrier(CLK_LOCAL_MEM_FENCE);
++  vstore4(convert_char4_rte(values * (half4)quantize_scale),
++          0, q8_qs + base);
++}
++#endif
++
++#if defined(IQ36_TOPK_MATVEC_KERNEL)
++__attribute__((reqd_work_group_size(256, 1, 1)))
++__attribute__((intel_reqd_sub_group_size(16)))
++__kernel void iq36_lm_head_i8q4_rowstripe8_matvec_topk8_f16(
++    __global const uchar* packed,
++    __global const char* q8_qs,
++    __global const float* q8_d,
++    __global half* output,
++    __global int* partial_top_ids,
++    __global float* partial_top_values) {
++  const uint row = (uint)get_global_id(0);
++  const uint lane = (uint)get_local_id(0);
++  const uint block = (uint)get_group_id(0);
++  const float full_value = row < IQ36_ROWS
++      ? iq36_lm_head_i8q4_rowstripe8_dot(packed, q8_qs, q8_d, (ulong)row)
++      : -INFINITY;
++  const half rounded = convert_half_rte(full_value);
++  const float value = row < IQ36_ROWS ? convert_float(rounded) : -INFINITY;
++  if (row < IQ36_ROWS) output[row] = rounded;
++  __local float values[256];
++  values[lane] = value;
++  barrier(CLK_LOCAL_MEM_FENCE);
++  if (lane != 0U) return;
++  float best_values[8];
++  int best_ids[8];
++  for (uint index = 0U; index < 8U; ++index) {
++    best_values[index] = -INFINITY;
++    best_ids[index] = -1;
++  }
++  const uint begin = block * 256U;
++  const uint count = min(256U, IQ36_ROWS - begin);
++  for (uint index = 0U; index < count; ++index) {
++    const float candidate = values[index];
++    uint position = 0U;
++    while (position < 8U &&
++           (best_values[position] > candidate ||
++            (best_values[position] == candidate &&
++             best_ids[position] < (int)(begin + index)))) {
++      ++position;
++    }
++    if (position < 8U) {
++      for (uint destination = 7U; destination > position; --destination) {
++        best_values[destination] = best_values[destination - 1U];
++        best_ids[destination] = best_ids[destination - 1U];
++      }
++      best_values[position] = candidate;
++      best_ids[position] = (int)(begin + index);
++    }
++  }
++  for (uint index = 0U; index < 8U; ++index) {
++    partial_top_ids[block * 8U + index] = best_ids[index];
++    partial_top_values[block * 8U + index] = best_values[index];
++  }
++}
++#endif
++
++#if defined(IQ36_OUTPUT_TOPK_KERNEL)
++__attribute__((reqd_work_group_size(256, 1, 1)))
++__attribute__((intel_reqd_sub_group_size(16)))
++__kernel void iq36_lm_head_output_topk8_f16(
++    __global const half* output,
++    __global int* partial_top_ids,
++    __global float* partial_top_values) {
++  const uint row = (uint)get_global_id(0);
++  const uint lane = (uint)get_local_id(0);
++  const uint block = (uint)get_group_id(0);
++  const float value = row < IQ36_ROWS
++      ? convert_float(output[row])
++      : -INFINITY;
++  __local float values[256];
++  values[lane] = value;
++  barrier(CLK_LOCAL_MEM_FENCE);
++  if (lane != 0U) return;
++  float best_values[8];
++  int best_ids[8];
++  for (uint index = 0U; index < 8U; ++index) {
++    best_values[index] = -INFINITY;
++    best_ids[index] = -1;
++  }
++  const uint begin = block * 256U;
++  const uint count = min(256U, IQ36_ROWS - begin);
++  for (uint index = 0U; index < count; ++index) {
++    const float candidate = values[index];
++    uint position = 0U;
++    while (position < 8U &&
++           (best_values[position] > candidate ||
++            (best_values[position] == candidate &&
++             best_ids[position] < (int)(begin + index)))) {
++      ++position;
++    }
++    if (position < 8U) {
++      for (uint destination = 7U; destination > position; --destination) {
++        best_values[destination] = best_values[destination - 1U];
++        best_ids[destination] = best_ids[destination - 1U];
++      }
++      best_values[position] = candidate;
++      best_ids[position] = (int)(begin + index);
++    }
++  }
++  for (uint index = 0U; index < 8U; ++index) {
++    partial_top_ids[block * 8U + index] = best_ids[index];
++    partial_top_values[block * 8U + index] = best_values[index];
++  }
++}
++#endif
++
++#if defined(IQ36_TOPK_MERGE_KERNEL)
++__attribute__((reqd_work_group_size(256, 1, 1)))
++__kernel void iq36_lm_head_topk8_merge_f32(
++    __global const int* partial_ids,
++    __global const float* partial_values,
++    __global int* top_ids,
++    __global float* top_values) {
++  const uint lane = (uint)get_local_id(0);
++  float best_values[8];
++  int best_ids[8];
++  for (uint index = 0U; index < 8U; ++index) {
++    best_values[index] = -INFINITY;
++    best_ids[index] = -1;
++  }
++  for (uint candidate = lane; candidate < 970U * 8U; candidate += 256U) {
++    const float value = partial_values[candidate];
++    const int id = partial_ids[candidate];
++    uint position = 0U;
++    while (position < 8U &&
++           (best_values[position] > value ||
++            (best_values[position] == value && best_ids[position] < id))) {
++      ++position;
++    }
++    if (position < 8U) {
++      for (uint destination = 7U; destination > position; --destination) {
++        best_values[destination] = best_values[destination - 1U];
++        best_ids[destination] = best_ids[destination - 1U];
++      }
++      best_values[position] = value;
++      best_ids[position] = id;
++    }
++  }
++  uint head = 0U;
++  for (uint output = 0U; output < 8U; ++output) {
++    const float lane_value = head < 8U ? best_values[head] : -INFINITY;
++    const int lane_id = head < 8U ? best_ids[head] : 0x7fffffff;
++    const float maximum = work_group_reduce_max(lane_value);
++    const int winner = work_group_reduce_min(
++        lane_value == maximum ? lane_id : 0x7fffffff);
++    if (lane_id == winner) ++head;
++    if (lane == 0U) {
++      top_ids[output] = winner;
++      top_values[output] = maximum;
++    }
++  }
++}
++#endif
++
++#if defined(IQ36_CORRECTION_KERNEL)
++__attribute__((reqd_work_group_size(64, 1, 1)))
++__attribute__((intel_reqd_sub_group_size(16)))
++__kernel void iq36_lm_head_i8_exact_topk8_correction_f16(
++    __global const char* weights,
++    __global const half* weight_scales,
++    __global const char* q8_qs,
++    __global const float* q8_d,
++    __global const int* top_ids,
++    __global half* output) {
++  const uint selected = (uint)get_group_id(0);
++  const uint lane = (uint)get_local_id(0);
++  if (selected >= 8U) return;
++  const int signed_row = top_ids[selected];
++  if (signed_row < 0 || signed_row >= (int)IQ36_ROWS) return;
++  const uint row = (uint)signed_row;
++  const ulong row_base = (ulong)row * 2048UL;
++  const uint lane_base = lane * 32U;
++  int dot_sum = 0;
++  for (uint chunk = 0U; chunk < 8U; ++chunk) {
++    const uint element = lane_base + chunk * 4U;
++#if defined(IQ36_USE_INTEGER_DOT)
++    dot_sum += dot(vload4(0, weights + row_base + element),
++                   vload4(0, q8_qs + element));
++#else
++    const char4 weight = vload4(0, weights + row_base + element);
++    const char4 input = vload4(0, q8_qs + element);
++    dot_sum += (int)weight.s0 * (int)input.s0;
++    dot_sum += (int)weight.s1 * (int)input.s1;
++    dot_sum += (int)weight.s2 * (int)input.s2;
++    dot_sum += (int)weight.s3 * (int)input.s3;
++#endif
++  }
++  __local int partial[64];
++  __local float group_sums[8];
++  partial[lane] = dot_sum;
++  barrier(CLK_LOCAL_MEM_FENCE);
++  if (lane < 8U) {
++    int group_sum = 0;
++    for (uint contributor = 0U; contributor < 8U; ++contributor) {
++      group_sum += partial[lane * 8U + contributor];
++    }
++    group_sums[lane] = (float)group_sum * q8_d[lane];
++  }
++  barrier(CLK_LOCAL_MEM_FENCE);
++  if (lane == 0U) {
++    float value = 0.0f;
++    for (uint group = 0U; group < 8U; ++group) value += group_sums[group];
++    output[row] = convert_half_rte(value * convert_float(weight_scales[row]));
++  }
++}
++#endif
++
++#if defined(IQ36_DIRECT_CORRECTION_KERNEL)
++__attribute__((reqd_work_group_size(64, 1, 1)))
++__attribute__((intel_reqd_sub_group_size(16)))
++__kernel void iq36_lm_head_i8_direct_topk8_correction_f16(
++    __global const char* weights,
++    __global const half* weight_scales,
++    __global const half* input,
++    __global const int* top_ids,
++    __global half* output) {
++  const uint selected = (uint)get_group_id(0);
++  const uint lane = (uint)get_local_id(0);
++  if (selected >= 8U) return;
++  const int signed_row = top_ids[selected];
++  if (signed_row < 0 || signed_row >= (int)IQ36_ROWS) return;
++  const uint row = (uint)signed_row;
++  const ulong row_base = (ulong)row * 2048UL;
++  const uint lane_base = lane * 32U;
++  float dot_sum = 0.0f;
++  for (uint chunk = 0U; chunk < 8U; ++chunk) {
++    const uint element = lane_base + chunk * 4U;
++    dot_sum += dot(
++        convert_float4(vload4(0, weights + row_base + element)),
++        convert_float4(vload4(0, input + element)));
++  }
++  __local float partial[64];
++  partial[lane] = dot_sum;
++  barrier(CLK_LOCAL_MEM_FENCE);
++  if (lane == 0U) {
++    float value = 0.0f;
++    for (uint contributor = 0U; contributor < 64U; ++contributor)
++      value += partial[contributor];
++    output[row] = convert_half_rte(value * convert_float(weight_scales[row]));
++  }
++}
++#endif
++)CLC";
++
++    using argument_type = kernel_selector::kernel_argument_types;
++    auto& quantize = data.kernels[0];
++    quantize.code.kernelString = std::make_shared<kernel_selector::kernel_string>();
++    quantize.code.kernelString->entry_point = kQuantizeKernelName;
++    quantize.code.kernelString->str = source;
++    quantize.code.kernelString->options =
++        "-cl-std=CL3.0 -D IQ36_QUANTIZE_KERNEL=1";
++    quantize.code.kernelString->batch_compilation = false;
++    quantize.params.workGroups.global = {512, 1, 1};
++    quantize.params.workGroups.local = {64, 1, 1};
++    quantize.params.arguments = {
++        {argument_type::INPUT, 0},
++        {argument_type::INTERNAL_BUFFER, 0},
++        {argument_type::INTERNAL_BUFFER, 1},
++    };
++
++    auto& matvec = data.kernels[1];
++    matvec.code.kernelString = std::make_shared<kernel_selector::kernel_string>();
++    matvec.code.kernelString->entry_point = kMatvecKernelName;
++    matvec.code.kernelString->str = source;
++    matvec.code.kernelString->options =
++        "-cl-std=CL3.0 -D IQ36_TOPK_MATVEC_KERNEL=1 -D IQ36_USE_INTEGER_DOT=1";
++    matvec.code.kernelString->batch_compilation = false;
++    matvec.params.workGroups.global = {kRows, 1, 1};
++    matvec.params.workGroups.local = {256, 1, 1};
++    matvec.params.arguments = {
++        {argument_type::WEIGHTS, 0},
++        {argument_type::INTERNAL_BUFFER, 0},
++        {argument_type::INTERNAL_BUFFER, 1},
++        {argument_type::OUTPUT, 0},
++        {argument_type::INTERNAL_BUFFER, 2},
++        {argument_type::INTERNAL_BUFFER, 3},
++    };
++
++    auto& merge = data.kernels[2];
++    merge.code.kernelString = std::make_shared<kernel_selector::kernel_string>();
++    merge.code.kernelString->entry_point = kMergeKernelName;
++    merge.code.kernelString->str = source;
++    merge.code.kernelString->options =
++        "-cl-std=CL3.0 -D IQ36_TOPK_MERGE_KERNEL=1";
++    merge.code.kernelString->batch_compilation = false;
++    merge.params.workGroups.global = {256, 1, 1};
++    merge.params.workGroups.local = {256, 1, 1};
++    merge.params.arguments = {
++        {argument_type::INTERNAL_BUFFER, 2},
++        {argument_type::INTERNAL_BUFFER, 3},
++        {argument_type::INTERNAL_BUFFER, 4},
++        {argument_type::INTERNAL_BUFFER, 5},
++    };
++
++    auto& correction = data.kernels[3];
++    correction.code.kernelString = std::make_shared<kernel_selector::kernel_string>();
++    correction.code.kernelString->entry_point = kCorrectionKernelName;
++    correction.code.kernelString->str = source;
++    correction.code.kernelString->options =
++        "-cl-std=CL3.0 -D IQ36_CORRECTION_KERNEL=1 -D IQ36_USE_INTEGER_DOT=1";
++    correction.code.kernelString->batch_compilation = false;
++    correction.params.workGroups.global = {kTopK * 64, 1, 1};
++    correction.params.workGroups.local = {64, 1, 1};
++    correction.params.arguments = {
++        {argument_type::INPUT, 1},
++        {argument_type::INPUT, 2},
++        {argument_type::INTERNAL_BUFFER, 0},
++        {argument_type::INTERNAL_BUFFER, 1},
++        {argument_type::INTERNAL_BUFFER, 4},
++        {argument_type::OUTPUT, 0},
++    };
++
++    auto& rerank = data.kernels[4];
++    rerank.code.kernelString = std::make_shared<kernel_selector::kernel_string>();
++    rerank.code.kernelString->entry_point = kOutputSelectKernelName;
++    rerank.code.kernelString->str = source;
++    rerank.code.kernelString->options =
++        "-cl-std=CL3.0 -D IQ36_OUTPUT_TOPK_KERNEL=1";
++    rerank.code.kernelString->batch_compilation = false;
++    rerank.params.workGroups.global = {kRows, 1, 1};
++    rerank.params.workGroups.local = {256, 1, 1};
++    rerank.params.arguments = {
++        {argument_type::OUTPUT, 0},
++        {argument_type::INTERNAL_BUFFER, 2},
++        {argument_type::INTERNAL_BUFFER, 3},
++    };
++
++    auto& second_merge = data.kernels[5];
++    second_merge.code.kernelString = std::make_shared<kernel_selector::kernel_string>();
++    second_merge.code.kernelString->entry_point = kMergeKernelName;
++    second_merge.code.kernelString->str = source;
++    second_merge.code.kernelString->options =
++        "-cl-std=CL3.0 -D IQ36_TOPK_MERGE_KERNEL=1";
++    second_merge.code.kernelString->batch_compilation = false;
++    second_merge.params.workGroups.global = {256, 1, 1};
++    second_merge.params.workGroups.local = {256, 1, 1};
++    second_merge.params.arguments = {
++        {argument_type::INTERNAL_BUFFER, 2},
++        {argument_type::INTERNAL_BUFFER, 3},
++        {argument_type::INTERNAL_BUFFER, 4},
++        {argument_type::INTERNAL_BUFFER, 5},
++    };
++
++    auto& second_correction = data.kernels[6];
++    second_correction.code.kernelString = std::make_shared<kernel_selector::kernel_string>();
++    second_correction.code.kernelString->entry_point = kDirectCorrectionKernelName;
++    second_correction.code.kernelString->str = source;
++    second_correction.code.kernelString->options =
++        "-cl-std=CL3.0 -D IQ36_DIRECT_CORRECTION_KERNEL=1";
++    second_correction.code.kernelString->batch_compilation = false;
++    second_correction.params.workGroups.global = {kTopK * 64, 1, 1};
++    second_correction.params.workGroups.local = {64, 1, 1};
++    second_correction.params.arguments = {
++        {argument_type::INPUT, 1},
++        {argument_type::INPUT, 2},
++        {argument_type::INPUT, 0},
++        {argument_type::INTERNAL_BUFFER, 4},
++        {argument_type::OUTPUT, 0},
++    };
++    data.internalBufferDataType = kernel_selector::Datatype::UINT8;
++    data.internalBuffers.emplace_back(kColumns);
++    data.internalBuffers.emplace_back(8 * sizeof(float));
++    data.internalBuffers.emplace_back(kTopBlockCount * kTopK * sizeof(int32_t));
++    data.internalBuffers.emplace_back(kTopBlockCount * kTopK * sizeof(float));
++    data.internalBuffers.emplace_back(kTopK * sizeof(int32_t));
++    data.internalBuffers.emplace_back(kTopK * sizeof(float));
++    data.needs_sub_kernels_sync = true;
++    return data;
++}
++
++void append_trace(const std::string& row) {
++    const char* path = std::getenv(
++        binary_enabled() ? "IQ36_LM_HEAD_I8Q1_TRACE_PATH" :
++                           "IQ36_LM_HEAD_I8Q4_TRACE_PATH");
++    if (!path || path[0] == '\0')
++        return;
++    static std::mutex trace_mutex;
++    std::lock_guard<std::mutex> trace_guard(trace_mutex);
++    std::ofstream trace(path, std::ios::app);
++    if (trace)
++        trace << row << '\n';
++}
++
++struct PackedWeightsCache {
++    std::mutex mutex;
++    const void* engine = nullptr;
++    bool binary = false;
++    memory::ptr weights;
++};
++
++PackedWeightsCache& process_packed_weights_cache() {
++    // The locked product has one LM head and one GPU engine per isolated
++    // worker.  Dynamic context buckets create distinct primitive impls, so
++    // retain the read-only packed carrier across those impls.  Intentionally
++    // keep it alive until process exit to avoid plugin/engine teardown order.
++    static auto* cache = new PackedWeightsCache();
++    return *cache;
++}
++
++struct IQ36LMHeadI8Q4Impl : typed_primitive_impl_ocl<fully_connected> {
++    using parent = typed_primitive_impl_ocl<fully_connected>;
++    using parent::parent;
++
++    DECLARE_OBJECT_TYPE_SERIALIZATION(cldnn::ocl::IQ36LMHeadI8Q4Impl)
++
++    IQ36LMHeadI8Q4Impl() = default;
++    explicit IQ36LMHeadI8Q4Impl(const kernel_selector::kernel_data& data) : parent(data) {}
++
++    std::unique_ptr<primitive_impl> clone() const override {
++        return std::make_unique<IQ36LMHeadI8Q4Impl>(*this);
++    }
++
++protected:
++    void prepare_packed_weights(const typed_primitive_inst<fully_connected>& instance,
++                                const memory::ptr& weights,
++                                const memory::ptr& weight_scales) const {
++        if (_weights_source == weights.get() && _scales_source == weight_scales.get())
++            return;
++
++        const auto& weights_layout = weights->get_layout();
++        const auto& scales_layout = weight_scales->get_layout();
++        OPENVINO_ASSERT(weights_layout.data_type == data_types::i8 &&
++                        weights_layout.format == format::bfyx &&
++                        weights_layout.get_linear_size() == kRows * kColumns,
++                        "IQ36 LM-head expected contiguous row-major I8 weights, got ",
++                        weights_layout.to_string());
++        OPENVINO_ASSERT(scales_layout.data_type == data_types::f16 &&
++                        scales_layout.get_linear_size() == kRows,
++                        "IQ36 LM-head expected one F16 scale per row, got ",
++                        scales_layout.to_string());
++
++        const bool binary = binary_enabled();
++        const size_t packed_bytes = binary ? kBinaryPackedBytes : kPackedBytes;
++        auto& engine = instance.get_network().get_engine();
++        auto& packed_cache = process_packed_weights_cache();
++        std::lock_guard<std::mutex> packed_guard(packed_cache.mutex);
++        const bool cache_hit =
++            packed_cache.weights != nullptr && packed_cache.engine == &engine &&
++            packed_cache.binary == binary;
++        if (cache_hit) {
++            _packed_weights = packed_cache.weights;
++        } else {
++        const layout packed_layout(
++            data_types::u8, format::bfyx,
++            tensor(batch(1), feature(static_cast<tensor::value_type>(packed_bytes))));
++        OPENVINO_ASSERT(engine.supports_allocation(allocation_type::usm_device),
++                        "IQ36 LM-head requires USM device allocation for packed weights");
++        _packed_weights = engine.allocate_memory(
++            packed_layout, allocation_type::usm_device, false);
++        auto& stream = instance.get_network().get_stream();
++        mem_lock<int8_t, mem_lock_type::read> source_weights(weights, stream);
++        mem_lock<uint16_t, mem_lock_type::read> source_scales(weight_scales, stream);
++        std::vector<uint8_t> target(packed_bytes, 0);
++        OPENVINO_ASSERT(source_weights.size() == kRows * kColumns &&
++                        source_scales.size() == kRows,
++                        "IQ36 LM-head source or target allocation size differs");
++
++        if (binary) {
++            for (size_t row_group = 0; row_group < kRows / kRowsPerStripe; ++row_group) {
++                auto* stripe = target.data() + row_group * kBinaryStripeBytes;
++                for (size_t lane = 0; lane < kRowsPerStripe; ++lane) {
++                    const size_t row = row_group * kRowsPerStripe + lane;
++                    const size_t row_offset = row * kColumns;
++                    uint32_t histogram[256]{};
++                    for (size_t column = 0; column < kColumns; ++column)
++                        ++histogram[static_cast<uint8_t>(source_weights.data()[row_offset + column])];
++
++                    int64_t low_sum = 0;
++                    int64_t high_sum = 0;
++                    uint32_t low_count = 0;
++                    uint32_t high_count = 0;
++                    for (int value = -128; value <= 127; ++value) {
++                        const auto count = histogram[static_cast<uint8_t>(value)];
++                        if (value < 0) {
++                            low_sum += static_cast<int64_t>(value) * count;
++                            low_count += count;
++                        } else {
++                            high_sum += static_cast<int64_t>(value) * count;
++                            high_count += count;
++                        }
++                    }
++                    float low = static_cast<float>(low_sum) /
++                        static_cast<float>(std::max(1U, low_count));
++                    float high = static_cast<float>(high_sum) /
++                        static_cast<float>(std::max(1U, high_count));
++                    for (int iteration = 0; iteration < 5; ++iteration) {
++                        const float threshold = (low + high) * 0.5f;
++                        low_sum = 0;
++                        high_sum = 0;
++                        low_count = 0;
++                        high_count = 0;
++                        for (int value = -128; value <= 127; ++value) {
++                            const auto count = histogram[static_cast<uint8_t>(value)];
++                            if (static_cast<float>(value) <= threshold) {
++                                low_sum += static_cast<int64_t>(value) * count;
++                                low_count += count;
++                            } else {
++                                high_sum += static_cast<int64_t>(value) * count;
++                                high_count += count;
++                            }
++                        }
++                        if (low_count != 0U)
++                            low = static_cast<float>(low_sum) / static_cast<float>(low_count);
++                        if (high_count != 0U)
++                            high = static_cast<float>(high_sum) / static_cast<float>(high_count);
++                    }
++                    const float threshold = (low + high) * 0.5f;
++                    std::memcpy(stripe + kBinaryCodeBytesPerStripe + lane * sizeof(float),
++                                &low, sizeof(float));
++                    std::memcpy(stripe + kBinaryCodeBytesPerStripe +
++                                    kRowsPerStripe * sizeof(float) + lane * sizeof(float),
++                                &high, sizeof(float));
++                    std::memcpy(stripe + kBinaryCodeBytesPerStripe +
++                                    2 * kRowsPerStripe * sizeof(float) + lane * sizeof(uint16_t),
++                                source_scales.data() + row, sizeof(uint16_t));
++                    for (size_t chunk = 0; chunk < kColumns / 32; ++chunk) {
++                        for (size_t byte = 0; byte < 4; ++byte) {
++                            uint8_t bits = 0;
++                            for (size_t bit = 0; bit < 8; ++bit) {
++                                const size_t column = chunk * 32 + byte * 8 + bit;
++                                const auto value = source_weights.data()[row_offset + column];
++                                if (static_cast<float>(value) > threshold)
++                                    bits |= static_cast<uint8_t>(1U << bit);
++                            }
++                            stripe[chunk * 32 + lane * 4 + byte] = bits;
++                        }
++                    }
++                }
++            }
++        } else {
++            uint8_t code_lut[256]{};
++            for (int value = -128; value <= 127; ++value) {
++                const int signed_code = std::clamp(
++                    static_cast<int>(std::nearbyint(static_cast<float>(value) / 16.0f)), -8, 7);
++                code_lut[static_cast<uint8_t>(value)] = static_cast<uint8_t>(signed_code + 8);
++            }
++            for (size_t row_group = 0; row_group < kRows / kRowsPerStripe; ++row_group) {
++                auto* stripe = target.data() + row_group * kStripeBytes;
++                for (size_t group = 0; group < kGroupsPerRow; ++group) {
++                    auto* block = stripe + group * kCodeBytesPerGroupStripe;
++                    for (size_t chunk = 0; chunk < 16; ++chunk) {
++                        for (size_t lane = 0; lane < kRowsPerStripe; ++lane) {
++                            const size_t row = row_group * kRowsPerStripe + lane;
++                            const size_t row_offset = row * kColumns;
++                            for (size_t element = 0; element < 4; ++element) {
++                                const size_t low = row_offset + group * 128 + chunk * 4 + element;
++                                const size_t high = low + 64;
++                                block[chunk * 32 + lane * 4 + element] = static_cast<uint8_t>(
++                                    code_lut[static_cast<uint8_t>(source_weights.data()[low])] |
++                                    (code_lut[static_cast<uint8_t>(source_weights.data()[high])] << 4));
++                            }
++                        }
++                    }
++                }
++                for (size_t lane = 0; lane < kRowsPerStripe; ++lane) {
++                    const size_t row = row_group * kRowsPerStripe + lane;
++                    std::memcpy(stripe + kCodeBytesPerStripe + lane * sizeof(uint16_t),
++                                source_scales.data() + row, sizeof(uint16_t));
++                }
++            }
++        }
++        _packed_weights->copy_from(stream, target.data(), 0, 0, packed_bytes, true);
++        packed_cache.engine = &engine;
++        packed_cache.binary = binary;
++        packed_cache.weights = _packed_weights;
++        }
++
++        _weights_source = weights.get();
++        _scales_source = weight_scales.get();
++        append_trace(std::string("{\"stage\":\"weight_prepack\",\"node\":\"") + instance.id() +
++                     "\",\"rows\":" + std::to_string(kRows) +
++                     ",\"columns\":" + std::to_string(kColumns) +
++                     ",\"source_weight_bytes\":" + std::to_string(weights->size()) +
++                     ",\"source_scale_bytes\":" + std::to_string(weight_scales->size()) +
++                     ",\"packed_bytes\":" + std::to_string(packed_bytes) +
++                     ",\"packed_allocation\":\"usm_device\"" +
++                     ",\"process_cache_hit\":" + (cache_hit ? "true" : "false") +
++                     ",\"codec\":\"" +
++                         (binary ? "binary_two_centroid_lloyd5" : "signed_q4") + "\"" +
++                     ",\"exact_correction_topk\":" +
++                         std::to_string(binary ? kBinaryLocalTopK : kTopK) +
++                     ",\"exact_correction_rows\":" +
++                         std::to_string(binary ? kBinaryCorrectionRows : kTopK) +
++                     ",\"direct_correction_topk\":" + std::to_string(kTopK) +
++                     ",\"exact_correction_passes\":" +
++                         std::to_string(2) +
++                     ",\"correction_reuses_source_weights\":true" +
++                     ",\"source_weight_format\":\"" + weights_layout.format.to_string() +
++                     "\",\"source_scale_format\":\"" + scales_layout.format.to_string() + "\"}");
++    }
++
++    kernel_arguments_data get_arguments(const typed_primitive_inst<fully_connected>& instance) const override {
++        const auto desc = instance.get_typed_desc<fully_connected>();
++        OPENVINO_ASSERT(desc->dynamic_quantized_activation,
++                        "IQ36 LM-head requires the existing DynamicQuantize producer");
++        const auto& dependency = instance.dependencies().at(0);
++        OPENVINO_ASSERT(dependency.first->type() == dynamic_quantize::type_id(),
++                        "IQ36 LM-head activation must come from DynamicQuantize");
++
++        const auto& source_dependency = dependency.first->dependencies().at(0);
++        auto activation = source_dependency.first->output_memory_ptr(source_dependency.second);
++        auto weights = instance.weights_memory();
++        auto weight_scales = instance.dep_memory_ptr(2);
++        OPENVINO_ASSERT(activation->get_layout().data_type == data_types::f16 &&
++                        activation->get_layout().format == format::bfyx &&
++                        activation->get_layout().get_linear_size() == kColumns &&
++                        instance.output_memory_ptr(0)->get_layout().format == format::bfyx &&
++                        instance.output_memory_ptr(0)->get_layout().get_linear_size() == kRows,
++                        "IQ36 LM-head runtime layout differs from the locked contiguous contract");
++        prepare_packed_weights(instance, weights, weight_scales);
++
++        kernel_arguments_data args;
++        args.inputs = {activation, weights, weight_scales};
++        args.weights = _packed_weights;
++        args.outputs = {instance.output_memory_ptr(0)};
++        return args;
++    }
++
++private:
++    mutable memory::ptr _packed_weights;
++    mutable const memory* _weights_source = nullptr;
++    mutable const memory* _scales_source = nullptr;
++};
++
++}  // namespace
++
++IQ36LMHeadI8Q4ImplementationManager::IQ36LMHeadI8Q4ImplementationManager()
++    : ImplementationManager(impl_types::onednn, shape_types::static_shape) {}
++
++bool IQ36LMHeadI8Q4ImplementationManager::validate_impl(const program_node& node) const {
++    if (!enabled() || !node.is_type<fully_connected>())
++        return false;
++    if (node.id() != kNodeId)
++        return false;
++    const auto& fc = node.as<fully_connected>();
++    const auto desc = fc.get_primitive();
++    if (desc->bias.is_valid() || !desc->compressed_weights ||
++        !desc->decompression_scale.is_valid() || desc->decompression_zero_point.is_valid() ||
++        desc->decompression_zero_point_scalar.has_value() || !desc->dynamic_quantized_activation ||
++        desc->dynamic_quantized_activation_zp || desc->dynamic_quantized_precomputed_reduction ||
++        node.get_dependencies().size() != 4 || !node.get_dependency(0).is_type<dynamic_quantize>()) {
++        return false;
++    }
++    const auto& weights = node.get_dependency(1).get_output_layout();
++    const auto& scales = node.get_dependency(2).get_output_layout();
++    if (!weights.is_static() || !scales.is_static() || weights.data_type != data_types::i8 ||
++        scales.data_type != data_types::f16 || logical_size(weights) != kRows * kColumns ||
++        logical_size(scales) != kRows || weights.format != format::bfyx) {
++        return false;
++    }
++    const auto& source = node.get_dependency(0).get_dependency(0).get_output_layout();
++    return source.data_type == data_types::f16;
++}
++
++bool IQ36LMHeadI8Q4ImplementationManager::support_shapes(const kernel_impl_params& params) const {
++    return has_exact_static_contract(params);
++}
++
++std::unique_ptr<primitive_impl> IQ36LMHeadI8Q4ImplementationManager::create_impl(
++    const program_node&, const kernel_impl_params& params) const {
++    if (!has_exact_static_contract(params))
++        return nullptr;
++    const bool binary = binary_enabled();
++    auto data = binary ? make_binary_kernel_data() : make_kernel_data();
++    append_trace(std::string("{\"stage\":\"selection\",\"node\":\"") + params.desc->id +
++                 "\",\"tokens\":1,\"rows\":" + std::to_string(kRows) +
++                 ",\"columns\":" + std::to_string(kColumns) +
++                 ",\"packed_bytes\":" +
++                     std::to_string(binary ? kBinaryPackedBytes : kPackedBytes) +
++                 ",\"topk\":" +
++                     std::to_string(binary ? kBinaryLocalTopK : kTopK) +
++                 ",\"correction_rows\":" +
++                     std::to_string(binary ? kBinaryCorrectionRows : kTopK) +
++                 ",\"provider\":\"" +
++                 (binary ?
++                    std::string(kBinaryQuantizeKernelName) + "+" +
++                        kBinaryMatvecKernelName + "+" + kBinaryCorrectionKernelName + "+" +
++                        kOutputSelectKernelName + "+" + kMergeKernelName + "+" +
++                        kDirectCorrectionKernelName :
++                    std::string(kQuantizeKernelName) + "+" + kMatvecKernelName + "+" +
++                        kMergeKernelName + "+" + kCorrectionKernelName + "+" +
++                        kOutputSelectKernelName + "+" + kMergeKernelName + "+" +
++                        kDirectCorrectionKernelName) +
++                 "\",\"direct_correction_topk\":" + std::to_string(kTopK) +
++                 ",\"correction_passes\":" + std::to_string(2) +
++                 ",\"global\":[248320,1,1],\"local\":[256,1,1]}");
++    return std::make_unique<IQ36LMHeadI8Q4Impl>(data);
++}
++
++in_out_fmts_t IQ36LMHeadI8Q4ImplementationManager::query_formats(const program_node&) const {
++    return {};
++}
++
++}  // namespace ocl
++}  // namespace cldnn
++
++BIND_BINARY_BUFFER_WITH_TYPE(cldnn::ocl::IQ36LMHeadI8Q4Impl)

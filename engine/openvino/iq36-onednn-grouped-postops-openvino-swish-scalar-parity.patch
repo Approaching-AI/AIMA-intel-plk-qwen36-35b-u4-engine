@@ -1,0 +1,13 @@
+diff --git a/src/gpu/intel/matmul/grouped_post_ops_gen.cpp b/src/gpu/intel/matmul/grouped_post_ops_gen.cpp
+index b1b93cab75..777f48a65d 100644
+--- a/src/gpu/intel/matmul/grouped_post_ops_gen.cpp
++++ b/src/gpu/intel/matmul/grouped_post_ops_gen.cpp
+@@ -158,7 +158,7 @@ std::string generate_post_ops_microgemm_header(
+                << ") * ((v) / (1.0f + native_exp(-("
+                << to_ocl_float(e.eltwise.alpha)
+                << ") * (v)))))\n";
+-            os << "    tile_elementwise((*c_tile), eltwise_apply_" << i
++            os << "    tile_elementwise_s((*c_tile), eltwise_apply_" << i
+                << ");\n";
+             os << "#undef eltwise_apply_" << i << "\n";
+         } else if (e.is_binary()) {

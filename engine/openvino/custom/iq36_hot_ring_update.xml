@@ -1,0 +1,12 @@
+<CustomLayer name="IQ36HotRingUpdate" type="SimpleGPU" version="1">
+  <Kernel entry="iq36_hot_ring_update">
+    <Source filename="iq36_hot_ring_update.cl"/>
+  </Kernel>
+  <Buffers>
+    <Tensor arg-index="0" type="input" port-index="0" format="BFYX"/>
+    <Tensor arg-index="1" type="input" port-index="1" format="BFYX"/>
+    <Tensor arg-index="2" type="input" port-index="2" format="BFYX"/>
+    <Tensor arg-index="3" type="output" port-index="0" format="BFYX"/>
+  </Buffers>
+  <WorkSizes global="X,Y,B*F" local=""/>
+</CustomLayer>

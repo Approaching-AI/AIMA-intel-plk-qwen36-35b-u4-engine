@@ -1,0 +1,44 @@
+{
+  "assembled_at": "2026-06-27T06:00:28Z",
+  "evidence": {
+    "boundary_fragment": "output/r0-boundary-bundle-fragment-20260627T054948Z",
+    "capture_spec": "output/r0-oracle-capture-spec-20260626T072158Z/capture-spec.json",
+    "distribution_sources": [
+      "output/r0-distribution-capture-materialized-20260626T213023Z/teacher-forced-distribution-materialized.jsonl",
+      "output/r0-distribution-capture-materialized-20260626T215314Z/teacher-forced-distribution-materialized.jsonl",
+      "output/r0-distribution-capture-materialized-20260626T221606Z/teacher-forced-distribution-materialized.jsonl",
+      "output/r0-distribution-capture-materialized-20260626T234204Z/teacher-forced-distribution-materialized.jsonl",
+      "output/r0-distribution-capture-materialized-20260627T013743Z/teacher-forced-distribution-materialized.jsonl",
+      "output/r0-distribution-capture-short-router-20260626T080938Z/teacher-forced-distribution-short-router.jsonl"
+    ],
+    "prompt_edge_policy": "output/r0-oracle-256k-prompt-edge-policy-20260626T145727Z",
+    "token_id_source": "output/r0-oracle-token-id-capture-20260626T083347Z/prompt-token-id-references.jsonl",
+    "token_topk_sources": [
+      "output/r0-oracle-seed-stage-20260626T034356Z/token-topk-seed.jsonl",
+      "output/r0-oracle-topk-smoke-20260626T084130Z/topk-smoke.jsonl",
+      "output/r0-oracle-topk-smoke-20260626T084753Z/topk-smoke.jsonl",
+      "output/r0-oracle-topk-smoke-20260626T085856Z/topk-smoke.jsonl",
+      "output/r0-oracle-topk-smoke-20260626T092009Z/topk-smoke.jsonl",
+      "output/r0-oracle-topk-smoke-20260626T100409Z/topk-smoke.jsonl",
+      "output/r0-oracle-topk-smoke-20260626T121946Z/topk-smoke.jsonl"
+    ]
+  },
+  "model": {
+    "batch_size": 1,
+    "path": "/home/intel/models/gguf/qwen3.6-35b-a3b-q4_k_m.gguf",
+    "sha256": "d42becf903ed7093d438c0d9f44afc136756b6b8f766121e9066fb888a2dc36e"
+  },
+  "row_counts": {
+    "boundary_input_rows": 524,
+    "boundary_output_rows": 524,
+    "teacher_forced_distribution_rows": 26,
+    "token_topk_rows": 26
+  },
+  "schema_version": "intel-qwen36-r0-oracle-full-bundle-v0",
+  "status": {
+    "full_acceptance_bundle": true,
+    "r0_oracle_gate_closed": true
+  },
+  "tool": "tools/intel-qwen36-r0-oracle-bundle-assemble.py",
+  "workstream": "intel-qwen36-35b-a3b-gguf-q4km"
+}

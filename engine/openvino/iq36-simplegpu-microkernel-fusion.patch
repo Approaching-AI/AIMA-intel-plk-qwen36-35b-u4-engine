@@ -1,0 +1,200 @@
+diff --git a/src/plugins/intel_gpu/src/graph/impls/ocl/custom_primitive.cpp b/src/plugins/intel_gpu/src/graph/impls/ocl/custom_primitive.cpp
+index 6a7df62e83c..b76e6b3e76f 100644
+--- a/src/plugins/intel_gpu/src/graph/impls/ocl/custom_primitive.cpp
++++ b/src/plugins/intel_gpu/src/graph/impls/ocl/custom_primitive.cpp
+@@ -5,13 +5,20 @@
+ #include "primitive_base.hpp"
+ 
+ #include "custom_gpu_primitive_inst.h"
++
++#ifdef ENABLE_ONEDNN_FOR_GPU
++#include "gpu/intel/gemm/jit/include/gemmstone/microkernel/fuser.hpp"
++#endif
+ #include "jitter.h"
+ 
++#include <cstdlib>
++#include <fstream>
+ #include <map>
+ #include <sstream>
+ #include <vector>
+ #include <memory>
+ #include <string>
++#include <string_view>
+ 
+ namespace kernel_selector {
+ using jit_constants = kernel_selector::JitConstants;
+@@ -265,10 +272,17 @@ static std::unique_ptr<primitive_impl> create(const custom_gpu_primitive_node& a
+     const auto& orig_output_layout = impl_param.get_output_layout();
+     OPENVINO_ASSERT(orig_output_layout.is_static(), "out layouts should be static for create primitive_impl!");
+ 
++    const int wg_input_index = primitive->calcWgDimInputIdx;
++    OPENVINO_ASSERT(wg_input_index < 0 ||
++                    static_cast<size_t>(wg_input_index) < impl_param.input_layouts.size(),
++                    "Custom work-group input index is out of range");
++    const auto wg_input_shape = wg_input_index >= 0
++        ? impl_param.get_input_layout(static_cast<size_t>(wg_input_index)).get_partial_shape()
++        : ov::PartialShape{};
+     std::vector<size_t> gws, lws;
+     custom_gpu_primitive::update_work_group_size(orig_output_layout.get_partial_shape(),
+-                                                 primitive->calcWgDimInputIdx,
+-                                                 orig_output_layout.get_partial_shape(),
++                                                 wg_input_index,
++                                                 wg_input_shape,
+                                                  primitive->globalSizeRules,
+                                                  primitive->localSizeRules,
+                                                  gws,
+@@ -281,6 +295,74 @@ static std::unique_ptr<primitive_impl> create(const custom_gpu_primitive_node& a
+         lws = primitive->lws;
+     }
+ 
++    const bool phase_specialized_fixed_fc =
++        primitive->kernel_entry_point == "iq36_fixed_fc1" ||
++        primitive->kernel_entry_point == "iq36_fixed_fc3" ||
++        primitive->kernel_entry_point == "iq36_fixed_fc4";
++    bool fixed_fc_prefill = false;
++    bool fixed_fc_wide = false;
++    if (phase_specialized_fixed_fc) {
++        const auto input_shape = impl_param.get_input_layout(0).get_partial_shape();
++        OPENVINO_ASSERT(input_shape.is_static() && input_shape.size() >= 2,
++                        "IQ36 fixed-FC activation shape must be static");
++        size_t tokens = 1;
++        for (size_t i = 0; i + 1 < input_shape.size(); ++i) {
++            tokens *= input_shape[i].get_length();
++        }
++
++        std::vector<size_t> widths;
++        size_t total_m = 0;
++        for (size_t i = 0; i < impl_param.output_layouts.size(); ++i) {
++            const auto output_shape = impl_param.get_output_layout(i).get_partial_shape();
++            OPENVINO_ASSERT(output_shape.is_static() && output_shape.size() >= 1,
++                            "IQ36 fixed-FC output shape must be static");
++            const size_t width = output_shape[output_shape.size() - 1].get_length();
++            widths.push_back(width);
++            total_m += width;
++        }
++
++        fixed_fc_prefill = tokens > 1;
++        fixed_fc_wide = total_m > 4096;
++        if (fixed_fc_prefill) {
++            const size_t tile_m = fixed_fc_wide ? 128 : 256;
++            const size_t tile_n = fixed_fc_wide ? 64 : 256;
++            const size_t local_m = fixed_fc_wide ? 64 : 128;
++            const size_t local_n = fixed_fc_wide ? 2 : 4;
++            size_t m_groups = 0;
++            for (const size_t width : widths) {
++                m_groups += (width + tile_m - 1) / tile_m;
++            }
++            const size_t n_groups = (tokens + tile_n - 1) / tile_n;
++            gws = {m_groups * local_m, n_groups * local_n, 1};
++            lws = {local_m, local_n, 1};
++        }
++
++        if (const char* trace_path =
++                std::getenv("IQ36_FIXED_FC_PROVIDER_TRACE_PATH");
++            trace_path != nullptr && trace_path[0] != '\0') {
++            std::ofstream trace(trace_path, std::ios::app);
++            if (trace) {
++                trace << "{\"entry\":\"" << primitive->kernel_entry_point
++                      << "\",\"tokens\":" << tokens
++                      << ",\"k\":" << input_shape[input_shape.size() - 1].get_length()
++                      << ",\"widths\":[";
++                for (size_t i = 0; i < widths.size(); ++i) {
++                    if (i != 0) {
++                        trace << ',';
++                    }
++                    trace << widths[i];
++                }
++                trace << "],\"provider\":\""
++                      << (fixed_fc_prefill
++                              ? (fixed_fc_wide ? "prefill_wide" : "prefill_small")
++                              : "decode")
++                      << "\",\"global\":[" << gws[0] << ',' << gws[1] << ',' << gws[2]
++                      << "],\"local\":[" << lws[0] << ',' << lws[1] << ',' << lws[2]
++                      << "]}\n";
++            }
++        }
++    }
++
+     auto cl_kernel = std::make_shared<kernel_selector::cl_kernel_data>();
+     cl_kernel->code.kernelString = std::make_shared<kernel_selector::kernel_string>();
+     cl_kernel->code.kernelString->entry_point = primitive->kernel_entry_point;
+@@ -292,6 +374,79 @@ static std::unique_ptr<primitive_impl> create(const custom_gpu_primitive_node& a
+         cl_kernel->code.kernelString->str += s + "\n";
+     }
+ 
++#ifdef ENABLE_ONEDNN_FOR_GPU
++    // Generated microkernel shims carry their machine-code package in the
++    // OpenCL source.  Mark custom kernels that contain such a package so the
++    // normal kernels-cache path performs the existing post-compile fusion.
++    // A phase-specialized custom layer may carry distinct generated prefill
++    // and decode shims in one source bundle.  Remove the inactive marked
++    // region before compilation so each static shape exposes exactly one
++    // microkernel package to the fuser.
++    constexpr std::string_view prefill_begin =
++        "// IQ36_EMBEDDED_MICROKERNEL_PREFILL_BEGIN";
++    constexpr std::string_view prefill_end =
++        "// IQ36_EMBEDDED_MICROKERNEL_PREFILL_END";
++    constexpr std::string_view decode_begin =
++        "// IQ36_EMBEDDED_MICROKERNEL_DECODE_BEGIN";
++    constexpr std::string_view decode_end =
++        "// IQ36_EMBEDDED_MICROKERNEL_DECODE_END";
++    auto& source = cl_kernel->code.kernelString->str;
++    if (phase_specialized_fixed_fc) {
++        const auto select_region = [&](std::string_view begin_marker,
++                                       std::string_view end_marker,
++                                       bool selected) {
++            const auto begin = source.find(begin_marker);
++            OPENVINO_ASSERT(begin != std::string::npos,
++                            "Missing IQ36 fixed-FC microkernel begin marker");
++            const auto end_position = source.find(end_marker, begin);
++            OPENVINO_ASSERT(end_position != std::string::npos,
++                            "Missing IQ36 fixed-FC microkernel end marker");
++            if (!selected) {
++                const auto end = end_position + end_marker.size();
++                source.erase(begin, end - begin);
++            }
++        };
++        select_region("// IQ36_FIXED_FC_DECODE_BEGIN",
++                      "// IQ36_FIXED_FC_DECODE_END",
++                      !fixed_fc_prefill);
++        select_region("// IQ36_FIXED_FC_PREFILL_WIDE_BEGIN",
++                      "// IQ36_FIXED_FC_PREFILL_WIDE_END",
++                      fixed_fc_prefill && fixed_fc_wide);
++        select_region("// IQ36_FIXED_FC_PREFILL_SMALL_BEGIN",
++                      "// IQ36_FIXED_FC_PREFILL_SMALL_END",
++                      fixed_fc_prefill && !fixed_fc_wide);
++        cl_kernel->code.kernelString->has_microkernels =
++            gemmstone::microkernel::hasMicrokernels(source.c_str());
++    } else if (source.find(prefill_begin) != std::string::npos ||
++               source.find(decode_begin) != std::string::npos) {
++        const auto input_shape = impl_param.get_input_layout(0).get_partial_shape();
++        const bool is_prefill = input_shape.rank().is_static() &&
++                                input_shape.rank().get_length() > 2 &&
++                                input_shape[2].is_static() &&
++                                input_shape[2].get_length() > 1;
++        const auto remove_region = [&](std::string_view begin_marker,
++                                       std::string_view end_marker) {
++            const auto begin = source.find(begin_marker);
++            if (begin == std::string::npos)
++                return;
++            const auto end_position = source.find(end_marker, begin);
++            OPENVINO_ASSERT(end_position != std::string::npos,
++                            "Missing embedded microkernel end marker");
++            const auto end = end_position + end_marker.size();
++            source.erase(begin, end - begin);
++        };
++        if (is_prefill)
++            remove_region(decode_begin, decode_end);
++        else
++            remove_region(prefill_begin, prefill_end);
++        cl_kernel->code.kernelString->has_microkernels =
++            gemmstone::microkernel::hasMicrokernels(source.c_str());
++    } else {
++        cl_kernel->code.kernelString->has_microkernels =
++            gemmstone::microkernel::hasMicrokernels(source.c_str());
++    }
++#endif
++
+     cl_kernel->params.workGroups.global = gws;
+     cl_kernel->params.workGroups.local = lws;
+ 

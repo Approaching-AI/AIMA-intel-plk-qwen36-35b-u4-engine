@@ -1,0 +1,13 @@
+<CustomLayer name="IQ36GatedDeltaNet" type="SimpleGPU" version="1">
+  <Kernel entry="iq36_gated_delta_net">
+    <Source filename="iq36_gated_delta_net.cl"/>
+  </Kernel>
+  <Buffers>
+    <Tensor arg-index="0" type="input" port-index="0" format="BFYX"/>
+    <Tensor arg-index="1" type="input" port-index="1" format="BFYX"/>
+    <Tensor arg-index="2" type="input" port-index="2" format="BFYX"/>
+    <Tensor arg-index="3" type="input" port-index="3" format="BFYX"/>
+    <Tensor arg-index="4" type="output" port-index="0" format="BFYX"/>
+  </Buffers>
+  <WorkSizes global="1,32,512" local="1,1,16"/>
+</CustomLayer>

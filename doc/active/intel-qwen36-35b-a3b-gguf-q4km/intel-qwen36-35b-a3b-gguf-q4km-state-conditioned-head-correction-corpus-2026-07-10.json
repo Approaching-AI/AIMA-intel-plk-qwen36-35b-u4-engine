@@ -1,0 +1,202 @@
+{
+  "schema_version": "intel-qwen36-state-conditioned-head-correction-corpus-v0",
+  "workstream": "intel-qwen36-35b-a3b-gguf-q4km",
+  "created_date": "2026-07-10",
+  "purpose": "Fresh split-locked corpus for evaluating a bounded state-conditioned head-logit correction without fitting on the six acceptance prompts.",
+  "decode_tokens_per_prompt": 8,
+  "domains": [
+    "arithmetic",
+    "code",
+    "instruction",
+    "factual",
+    "transformation",
+    "structured_extraction"
+  ],
+  "split_counts": {
+    "fit": 12,
+    "validation": 6,
+    "test": 6
+  },
+  "data_policy": {
+    "split_locked_before_tokenization": true,
+    "split_locked_before_decode": true,
+    "acceptance_prompt_text_or_ids_allowed_in_fit": false,
+    "validation_or_test_results_allowed_to_change_model": false,
+    "runtime_native_oracle_allowed": false,
+    "runtime_prompt_case_or_position_features_allowed": false
+  },
+  "model_contract": {
+    "candidate_token_selection": "fit-split aggregate absolute KLD contributors only",
+    "maximum_token_ids": 16,
+    "allowed_runtime_features": [
+      "gpu_top8_token_ids",
+      "gpu_top8_logits",
+      "top1_margin"
+    ],
+    "model_class": "per-token ridge affine correction over intercept and gpu_logit_minus_top1_logit, applied only when the token is in GPU top8",
+    "parameters_per_token": 2,
+    "maximum_parameters": 32,
+    "full_vocab_host_rescan_in_speed_lane_allowed": false,
+    "implementation_added_wall_us_per_token_max": 20.525576981789345
+  },
+  "correctness_contract": {
+    "top1_rate_min": 1.0,
+    "max_kld": 0.005,
+    "per_case_kld_regression_epsilon": 1e-7,
+    "validation_and_test_must_both_pass": true,
+    "acceptance_recheck_after_fresh_test": [
+      "short_math_001",
+      "short_factual_002",
+      "short_transform_003",
+      "router_math_reason_001",
+      "router_code_reason_002",
+      "router_instruction_003"
+    ]
+  },
+  "prompts": [
+    {
+      "id": "fresh_arithmetic_01",
+      "domain": "arithmetic",
+      "split": "fit",
+      "prompt": "A workshop packs 14 bolts into each box. It fills 9 boxes and then adds 11 loose bolts. How many bolts are there? Show the arithmetic and answer."
+    },
+    {
+      "id": "fresh_arithmetic_02",
+      "domain": "arithmetic",
+      "split": "fit",
+      "prompt": "A train travels 68 kilometers per hour for 3 hours, then travels 27 more kilometers. Give only the calculation and total distance."
+    },
+    {
+      "id": "fresh_arithmetic_03",
+      "domain": "arithmetic",
+      "split": "validation",
+      "prompt": "Five shelves each hold 23 books. After 17 books are removed, how many remain? Show one equation and the answer."
+    },
+    {
+      "id": "fresh_arithmetic_04",
+      "domain": "arithmetic",
+      "split": "test",
+      "prompt": "A pump moves 16 liters per minute for 7 minutes and then 8 additional liters. State the arithmetic and final volume."
+    },
+    {
+      "id": "fresh_code_01",
+      "domain": "code",
+      "split": "fit",
+      "prompt": "In Python, explain why range(4) produces four values and show the resulting list in one short answer."
+    },
+    {
+      "id": "fresh_code_02",
+      "domain": "code",
+      "split": "fit",
+      "prompt": "Write a Python expression that returns the even numbers from [1, 2, 3, 4, 5, 6]. Return the expression and its result."
+    },
+    {
+      "id": "fresh_code_03",
+      "domain": "code",
+      "split": "validation",
+      "prompt": "A Python function uses return inside a for loop and stops after the first item. Explain the bug in two concise sentences."
+    },
+    {
+      "id": "fresh_code_04",
+      "domain": "code",
+      "split": "test",
+      "prompt": "Show a minimal Python dictionary lookup that returns 0 when the key is missing, then name the method used."
+    },
+    {
+      "id": "fresh_instruction_01",
+      "domain": "instruction",
+      "split": "fit",
+      "prompt": "Give three numbered steps for checking a file checksum before opening the file. Keep each step under twelve words."
+    },
+    {
+      "id": "fresh_instruction_02",
+      "domain": "instruction",
+      "split": "fit",
+      "prompt": "Describe how to sort a folder by modification time in exactly two imperative sentences."
+    },
+    {
+      "id": "fresh_instruction_03",
+      "domain": "instruction",
+      "split": "validation",
+      "prompt": "Provide four brief steps for restarting a local service and verifying that it is healthy."
+    },
+    {
+      "id": "fresh_instruction_04",
+      "domain": "instruction",
+      "split": "test",
+      "prompt": "Explain how to archive a directory and verify the archive in three concise commands with descriptions."
+    },
+    {
+      "id": "fresh_factual_01",
+      "domain": "factual",
+      "split": "fit",
+      "prompt": "What gas do plants primarily absorb during photosynthesis? Answer with the gas name and one short explanatory sentence."
+    },
+    {
+      "id": "fresh_factual_02",
+      "domain": "factual",
+      "split": "fit",
+      "prompt": "Which ocean is the largest on Earth? Give the name followed by one supporting fact."
+    },
+    {
+      "id": "fresh_factual_03",
+      "domain": "factual",
+      "split": "validation",
+      "prompt": "What is the chemical symbol for sodium? Answer with the symbol and the element name."
+    },
+    {
+      "id": "fresh_factual_04",
+      "domain": "factual",
+      "split": "test",
+      "prompt": "Which planet is known for its prominent ring system? Answer in one sentence."
+    },
+    {
+      "id": "fresh_transformation_01",
+      "domain": "transformation",
+      "split": "fit",
+      "prompt": "Rewrite this as a direct instruction: It would be helpful if the report could be checked before noon."
+    },
+    {
+      "id": "fresh_transformation_02",
+      "domain": "transformation",
+      "split": "fit",
+      "prompt": "Condense this sentence without changing its meaning: The backup completed successfully even though it started later than planned."
+    },
+    {
+      "id": "fresh_transformation_03",
+      "domain": "transformation",
+      "split": "validation",
+      "prompt": "Rewrite this in active voice: The deployment was approved by the release manager after the tests passed."
+    },
+    {
+      "id": "fresh_transformation_04",
+      "domain": "transformation",
+      "split": "test",
+      "prompt": "Turn this into a polite request: Send the revised schedule before the meeting begins."
+    },
+    {
+      "id": "fresh_structured_01",
+      "domain": "structured_extraction",
+      "split": "fit",
+      "prompt": "Extract the name and age as compact JSON from: Mira is 31 years old."
+    },
+    {
+      "id": "fresh_structured_02",
+      "domain": "structured_extraction",
+      "split": "fit",
+      "prompt": "Return the city and temperature as JSON from: Oslo reported 12 degrees Celsius."
+    },
+    {
+      "id": "fresh_structured_03",
+      "domain": "structured_extraction",
+      "split": "validation",
+      "prompt": "Extract the ticket ID and status as JSON from: Ticket AX-204 is currently pending."
+    },
+    {
+      "id": "fresh_structured_04",
+      "domain": "structured_extraction",
+      "split": "test",
+      "prompt": "Return the product and quantity as JSON from: The order contains 7 copper washers."
+    }
+  ]
+}

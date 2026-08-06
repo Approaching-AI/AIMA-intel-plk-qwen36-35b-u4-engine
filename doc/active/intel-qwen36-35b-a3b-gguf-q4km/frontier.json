@@ -1,0 +1,435 @@
+{
+  "schema": "intel-qwen36-frontier-v1",
+  "workstream": "intel-qwen36-35b-a3b-gguf-q4km",
+  "stage": "OpenVINO U4 specialization seq2300_product_gate_closed_speedup_claims_allowed; no promoted performance candidate. R0 closed.",
+  "generated_by": "tools/intel-qwen36-frontier-sync.py",
+  "derived_from": [
+    "doc/active/intel-qwen36-35b-a3b-gguf-q4km/routes-ledger.json",
+    "doc/active/intel-qwen36-35b-a3b-gguf-q4km/rejected-routes.json",
+    "output/ census (gpu-* + r2-gpu-* dirs + explore-log.jsonl)"
+  ],
+  "note": "Tier-2 machine state (ch.3 §3.4). Do NOT hand-edit; regenerate via frontier-sync. Tier-3 prose pointer is current-frontier.md; raw is output/. routes-ledger.json/rejected-routes.json remain the hand-authored attack/closed boards; this file derives the no-progress signal they could not.",
+  "active_route": {
+    "id": "openvino_exact_attention_dual_cohort_complete_product_matrix",
+    "family": "openvino_gpu_specialization",
+    "backend": "coverage-bounded seven-bucket three-prompt-class correctness, paired inference, short-guard, and context-ladder closure for the optimized carrier",
+    "status": "seq2300_product_gate_closed_speedup_claims_allowed"
+  },
+  "goal_anchor": {
+    "metric": "diagnostic short/1k cold no-prefix decode tok/s (TPOT), conc=1",
+    "same_host_vulkan_floor_tps": 19.5,
+    "diagnostic_short_decode_floor_tps": 49.8,
+    "core_product_matrix": {
+      "input_buckets": [
+        2048,
+        4096,
+        8192,
+        16384,
+        32768,
+        65536,
+        131072
+      ],
+      "output_tokens": 512,
+      "minimum_openvino_speedup_ratio": 1.1,
+      "minimum_openvino_speedup_ratio_applies_to_buckets": [
+        32768,
+        65536,
+        131072
+      ],
+      "regression_guard_minimum_ratio": 0.98,
+      "regression_guard_input_buckets": [
+        2048,
+        4096,
+        8192,
+        16384
+      ],
+      "both_prefill_and_decode_required": true,
+      "route_selection_priority_input_buckets": [
+        32768,
+        65536,
+        131072
+      ],
+      "short_diagnostic_can_satisfy_product": false,
+      "exact_bucket_specialization_allowed": true,
+      "short_candidate_may_retain_stock_sdpa": true,
+      "component_no_slower_each_short_bucket_required": false,
+      "performance_contract": "doc/adr/0075-make-long-context-win-the-product-target.md"
+    },
+    "product_runtime": {
+      "candidate": "OpenVINO GPU plus custom OpenCL operations",
+      "correctness_reference": "isolated stock OpenVINO U4",
+      "performance_denominator": "isolated same-run stock OpenVINO",
+      "legacy_gguf_native_role": "diagnostic_only",
+      "contract": "doc/adr/0070-adopt-openvino-u4-specialization-runtime.md"
+    },
+    "cpu_native_denominator_tps": 4.2,
+    "current_best_tps": 50.499875543056724,
+    "best_artifact": "output/packed-token-level-zero-real-backend-gate-20260712Tseq744-distribution-confirm-cleanZ",
+    "best_diagnostic_class": "full_real_40_layer_level_zero_decode",
+    "best_correctness_mode": "three_case_eight_token_consensus_and_teacher_forced_distribution",
+    "best_correctness_artifact": "output/packed-token-level-zero-real-backend-gate-20260712Tseq744-distribution-confirm-cleanZ",
+    "best_distribution_max_kld": 0.00344777413433,
+    "best_distribution_top1_rate": 1,
+    "legacy_bringup_history_note": "The current best is a full-real 40-layer Level Zero backend. Its clean short 1k decode speed, three-case eight-token consensus, and teacher-forced distribution slice pass. ADR 0070 retains it only as legacy diagnostic evidence. OV0 proves an OpenVINO custom-op mechanism, seq802 locks the real GatedDeltaNet boundary oracle, and seq803/804 prove exact one/all-layer GDN substitution. Seq836 proves all-ten hot/cold full-attention semantics, but its scalar carrier is much slower than stock. A bounded tiled split improved diagnostic prefill but is rejected because fanned-out input mutation left hot K/V state zero and failed decode KLD. The active carrier must have one graph-owned state owner per layer; no optimized OpenVINO performance candidate exists yet.",
+    "note": "The prior 19.5 tok/s Vulkan bring-up floor is retired. The 49.8 tok/s 1k floor and current best are retained only as diagnostic short-context history. ADR 0051 keeps the seven-row 2k-128k/output-512 matrix; ADR 0070 changes the candidate to an OpenVINO GPU specialization against isolated stock OpenVINO. STATUS and the active route ledger hold its current gate."
+  },
+  "bringup_progress": {
+    "axis": "structural — deepest per-layer/boundary teacher-forced gate closed",
+    "deepest_layer_closed": 23,
+    "gpu_probe_runs": 262,
+    "advancing": false,
+    "interpretation": "The short decode bring-up floor is closed but is outside the core product matrix. Correctness evidence can close a gate without moving the seven-row long-context product axis."
+  },
+  "no_progress": {
+    "axis": "diagnostic legacy short-decode anchor; not product completion",
+    "definition": "token-emitting GPU runs (r2-gpu-* dirs + explore-log rounds, pass or fail) stamped after the last SIGNIFICANT legacy effect-band improvement of the goal metric",
+    "runs_since_goal_improved": 0,
+    "runs_since_significant_improvement": 1,
+    "noise": {
+      "rel": 0.00489,
+      "same_config_pairs": 234,
+      "p50_same_config_spread": 0.00489,
+      "p90_same_config_spread": 0.02819,
+      "promotion_gate": false,
+      "role": "legacy_scalar_stall_heuristic",
+      "definition": "median relative spread across same-config-hash repeat pairs stamped <=30 min apart, with no fixed floor or cap (median, because legacy same-flag pairs can straddle source edits; source_sha in new manifests removes that ambiguity). This is a legacy stall heuristic, not a promotion gate; promotion uses one-sided confidence bounds."
+    },
+    "last_significant_improvement": {
+      "ts": "20260712T071826Z",
+      "tps": 50.432931,
+      "artifact": "output/packed-token-level-zero-real-backend-gate-20260712Tseq743-distribution-cleanZ"
+    },
+    "soft_reflection_threshold": 30,
+    "hard_stall_threshold": 50,
+    "soft_reflection_breached": false,
+    "hard_stall_breached": false,
+    "glide_slope": {
+      "window_runs": 100,
+      "horizon_runs": 200,
+      "trailing_rate_tps_per_run": null,
+      "projected_runs_to_floor": null,
+      "breached": false,
+      "definition": "best-tps gain over the trailing 100 token-emitting runs, projected forward; breached when the 49.8 floor is > 200 further runs away at that rate (soft reflection, ch.3 §3.5 trigger ① 'direction, not motion')."
+    },
+    "structural_axis_advancing": false,
+    "review_recorded_for_current_best": false
+  },
+  "goal_budget": {
+    "source_artifact": "output/openvino-exact-attention-dual-cohort-32k64k-wall-20260724Tseq2143-clean/raw/sentinel_064k/block01/candidate-b1",
+    "correctness_artifact": "output/openvino-exact-attention-dual-cohort-32k64k-wall-20260724Tseq2143-clean",
+    "lane": {
+      "input_tokens": 65536,
+      "measured_output_tokens": 512,
+      "measured_decode_intervals": 511,
+      "required_product_output_tokens": 512,
+      "diagnostic_only": false,
+      "decode_walls_excluded_from_goal": 0,
+      "stable_tail_diagnostic_excludes": 16
+    },
+    "per_token_ms": {
+      "candidate_complete_wall": 33.127419,
+      "stock_complete_wall": 59.731551,
+      "candidate_stable_tail_median": 32.445725,
+      "stock_stable_tail_median": 58.788342,
+      "absolute_cap": 34.153005,
+      "same_run_1p10_cap": 54.30141,
+      "effective_cap": 34.153005,
+      "remaining_cut": 0.0,
+      "remaining_total_cut": 0.0
+    },
+    "verdict": {
+      "floor_tps": 29.28,
+      "current_complete_tps": 30.186475,
+      "wall_cap_ms_per_token": 34.153005,
+      "can_reach_floor_without_more_wall_cut": true,
+      "min_complete_wall_cut_ms_needed": 0.0,
+      "min_complete_wall_cut_pct_needed": 0.0
+    },
+    "candidate_git_commit": "1ca7c2b3f48b1c01998110ce01d1a7380c30293e",
+    "note": "Seq2143 closes direct source-binding uncertainty for the optimized 32k and 64k lanes. Their formal decode medians are 38.883600 and 30.254115 tok/s, both beyond their absolute floors; seq2140 already closes 128k. Seq2180 proves the remaining blocker is short-context normalized-rate smoothness, not long evidence or matrix coverage.",
+    "regenerate_via": "tools/intel-qwen36-frontier-sync.py"
+  },
+  "goal_history": {
+    "significant_improvements": 57,
+    "recent": [
+      {
+        "ts": "20260703T134300Z",
+        "tps": 17.122546,
+        "artifact": "output/r2-gpu-tailhandle-reuse-selected-q8-shared-noqueue-speed-20260703T134300Z"
+      },
+      {
+        "ts": "20260703T153735Z",
+        "tps": 17.230641,
+        "artifact": "output/r2-gpu-ffn-down-finish-bundle-noqueue-speed-20260703T153735Z"
+      },
+      {
+        "ts": "20260703T171100Z",
+        "tps": 17.377449,
+        "artifact": "output/r2-gpu-shared-gateup-localq8-shape-fix-noqueue-speed-20260703T171100Z"
+      },
+      {
+        "ts": "20260703T172800Z",
+        "tps": 17.605475,
+        "artifact": "output/r2-gpu-q4-localq8-scale-cache-gateup-noqueue-speed-20260703T172800Z"
+      },
+      {
+        "ts": "20260705T033254Z",
+        "tps": 18.579802,
+        "artifact": "output/r2-gpu-selected-shared-gateup-no-concat-noqueue-speed-20260705T033254Z"
+      },
+      {
+        "ts": "20260705T062956Z",
+        "tps": 18.839304,
+        "artifact": "output/r2-gpu-selected-shared-q6-down-combined-noqueue-speed-20260705T062956Z"
+      },
+      {
+        "ts": "20260705T082221Z",
+        "tps": 19.178255,
+        "artifact": "output/r2-gpu-selected-shared-q4q6-down-combined-noqueue-speed-20260705T082221Z"
+      },
+      {
+        "ts": "20260705T143006Z",
+        "tps": 19.330323,
+        "artifact": "output/r2-gpu-selected-shared-q4q6-down-cold-q6-experts-noqueue-speed-20260705T143006Z"
+      },
+      {
+        "ts": "20260707T201724Z",
+        "tps": 19.779968,
+        "artifact": "output/r2-gpu-attention-front-rowblock16-noqueue-speed-20260707T201724Z"
+      },
+      {
+        "ts": "20260711T215203Z",
+        "tps": 26.133804,
+        "artifact": "output/packed-token-level-zero-real-backend-gate-20260712Tseq740cleanZ"
+      },
+      {
+        "ts": "20260712T013702Z",
+        "tps": 50.169802,
+        "artifact": "output/packed-token-level-zero-real-backend-gate-20260712Tseq741-cleanZ"
+      },
+      {
+        "ts": "20260712T071826Z",
+        "tps": 50.432931,
+        "artifact": "output/packed-token-level-zero-real-backend-gate-20260712Tseq743-distribution-cleanZ"
+      }
+    ],
+    "definition": "legacy empirical-effect-band improvement chain of the goal metric (correctness-checked decode rows only); product and component promotion use confidence bounds"
+  },
+  "ledger": {
+    "candidates": 939,
+    "sub_threshold_candidates": 107,
+    "switch_decisions": 668,
+    "rejected_routes": 609,
+    "rejected_classes": 3,
+    "parked_alternates": 2
+  },
+  "pre_registered_alternatives": "doc/active/intel-qwen36-35b-a3b-gguf-q4km/routes-ledger.json#parked_routes",
+  "controls": {
+    "stall_gate": "tools/intel-qwen36-stall-gate.py",
+    "code_volume_gate": "tools/intel-qwen36-code-volume-check.py",
+    "doc_discipline_gate": "tools/validate_repo.py (check_doc_discipline)",
+    "decode_budget": "tools/iq36_budget.py (kill-number, ch.2 §2.1 #1)"
+  },
+  "explore": {
+    "log": "output/explore-log.jsonl",
+    "rounds": 297,
+    "best_explore_tps_unverified": 19.676637,
+    "latest_profile_budget": {
+      "label": "attention-front-rowblock16-profile-seq188",
+      "ts": "20260707T202116Z",
+      "source_sha": "0866c51629bc4995",
+      "tps": 19.21968322,
+      "top1_matches_native": true,
+      "note": "artifact-free explore profile; cannot set best, but can refresh direction/budget attribution between promotions",
+      "source_artifact": "output/explore-log.jsonl#20260707T202116Z",
+      "per_token_ms": {
+        "wall": 52.03,
+        "gpu_kernel_busy_floor": 36.354,
+        "non_kernel_overhead": 15.676
+      },
+      "verdict": {
+        "floor_tps": 49.8,
+        "floor_budget_ms_per_token": 20.08,
+        "overhead_only_ceiling_tok_s": 27.507,
+        "can_reach_floor_without_kernel_work": false,
+        "min_kernel_time_cut_pct_needed": 44.8
+      },
+      "top_stage_walls_ms_per_token": [
+        {
+          "stage": "selected_ffn",
+          "ms_per_token": 10.927
+        },
+        {
+          "stage": "linear_preconv",
+          "ms_per_token": 8.383
+        },
+        {
+          "stage": "attention_front",
+          "ms_per_token": 8.007
+        },
+        {
+          "stage": "lm_head_gpu",
+          "ms_per_token": 4.753
+        },
+        {
+          "stage": "full_core",
+          "ms_per_token": 4.065
+        },
+        {
+          "stage": "linear_delta",
+          "ms_per_token": 3.706
+        }
+      ],
+      "stage_kernel_gap_estimates_ms_per_token": [
+        {
+          "stage": "selected_ffn",
+          "wall_ms_per_token": 10.927,
+          "known_work_ms_per_token": 8.013,
+          "gap_ms_per_token": 2.914,
+          "known_work": "selected gate/up + SwiGLU + down kernel min"
+        },
+        {
+          "stage": "full_core",
+          "wall_ms_per_token": 4.065,
+          "known_work_ms_per_token": 2.963,
+          "gap_ms_per_token": 1.102,
+          "known_work": "full-core attention-front handoff kernel min"
+        },
+        {
+          "stage": "linear_preconv",
+          "wall_ms_per_token": 8.383,
+          "known_work_ms_per_token": 7.321,
+          "gap_ms_per_token": 1.062,
+          "known_work": "linear preconv QKV/conv/alpha-beta/z/postconv kernel min"
+        },
+        {
+          "stage": "attention_front",
+          "wall_ms_per_token": 8.007,
+          "known_work_ms_per_token": 7.028,
+          "gap_ms_per_token": 0.979,
+          "known_work": "attention-front handoff + FFN RMSNorm kernel min"
+        },
+        {
+          "stage": "linear_delta",
+          "wall_ms_per_token": 3.706,
+          "known_work_ms_per_token": 3.053,
+          "gap_ms_per_token": 0.653,
+          "known_work": "linear-delta kernel wall subprofile"
+        },
+        {
+          "stage": "shared_ffn",
+          "wall_ms_per_token": 0.054,
+          "known_work_ms_per_token": 0.0,
+          "gap_ms_per_token": 0.054,
+          "known_work": "shared gate/up + SwiGLU + down kernel min"
+        },
+        {
+          "stage": "lm_head_gpu",
+          "wall_ms_per_token": 4.753,
+          "known_work_ms_per_token": 4.752,
+          "gap_ms_per_token": 0.002,
+          "known_work": "LM-head wall subprofile"
+        }
+      ],
+      "substage_gap_estimates_ms_per_token": [
+        {
+          "stage": "selected_ffn",
+          "substage": "down_kernel_wait",
+          "wall_ms_per_token": 3.689,
+          "known_work_ms_per_token": 0.0,
+          "gap_ms_per_token": 3.689,
+          "known_work": "selected down queue wait wall only"
+        },
+        {
+          "stage": "selected_ffn",
+          "substage": "down",
+          "wall_ms_per_token": 4.613,
+          "known_work_ms_per_token": 3.208,
+          "gap_ms_per_token": 1.406,
+          "known_work": "selected down kernel min"
+        },
+        {
+          "stage": "selected_ffn",
+          "substage": "gate_up",
+          "wall_ms_per_token": 5.89,
+          "known_work_ms_per_token": 4.757,
+          "gap_ms_per_token": 1.133,
+          "known_work": "selected gate/up kernel min"
+        },
+        {
+          "stage": "linear_preconv",
+          "substage": "qkv_conv",
+          "wall_ms_per_token": 5.174,
+          "known_work_ms_per_token": 4.43,
+          "gap_ms_per_token": 0.744,
+          "known_work": "linear qkv + conv kernel min"
+        },
+        {
+          "stage": "linear_preconv",
+          "substage": "alpha_beta",
+          "wall_ms_per_token": 3.01,
+          "known_work_ms_per_token": 2.276,
+          "gap_ms_per_token": 0.734,
+          "known_work": "linear alpha/beta kernel min"
+        },
+        {
+          "stage": "linear_preconv",
+          "substage": "postconv_prep",
+          "wall_ms_per_token": 1.101,
+          "known_work_ms_per_token": 0.615,
+          "gap_ms_per_token": 0.487,
+          "known_work": "linear postconv-prep kernel min"
+        },
+        {
+          "stage": "linear_delta",
+          "substage": "final_read",
+          "wall_ms_per_token": 0.34,
+          "known_work_ms_per_token": 0.0,
+          "gap_ms_per_token": 0.34,
+          "known_work": "linear-delta final read wall only"
+        },
+        {
+          "stage": "linear_delta",
+          "substage": "input_upload",
+          "wall_ms_per_token": 0.227,
+          "known_work_ms_per_token": 0.0,
+          "gap_ms_per_token": 0.227,
+          "known_work": "linear-delta input upload wall only"
+        },
+        {
+          "stage": "selected_ffn",
+          "substage": "raw_setup",
+          "wall_ms_per_token": 0.226,
+          "known_work_ms_per_token": 0.0,
+          "gap_ms_per_token": 0.226,
+          "known_work": "selected raw/handle setup wall only"
+        },
+        {
+          "stage": "selected_ffn",
+          "substage": "input_q8",
+          "wall_ms_per_token": 0.157,
+          "known_work_ms_per_token": 0.0,
+          "gap_ms_per_token": 0.157,
+          "known_work": "selected input Q8 wall only"
+        },
+        {
+          "stage": "linear_preconv",
+          "substage": "host_activation",
+          "wall_ms_per_token": 0.035,
+          "known_work_ms_per_token": 0.0,
+          "gap_ms_per_token": 0.035,
+          "known_work": "linear host activation wall only"
+        },
+        {
+          "stage": "shared_ffn",
+          "substage": "raw_setup",
+          "wall_ms_per_token": 0.021,
+          "known_work_ms_per_token": 0.0,
+          "gap_ms_per_token": 0.021,
+          "known_work": "shared raw/handle setup wall only"
+        }
+      ]
+    },
+    "note": "explore rounds are artifact-free (one JSONL line, ch.2 §2.2); they count toward the stall counters but can never set the best — promote a promising config by re-running without --explore"
+  }
+}

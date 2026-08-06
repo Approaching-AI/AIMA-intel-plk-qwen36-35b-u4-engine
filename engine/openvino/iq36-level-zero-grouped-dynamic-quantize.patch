@@ -1,0 +1,37 @@
+diff --git a/cmake/features.cmake b/cmake/features.cmake
+index f1168663..e5a5680d 100644
+--- a/cmake/features.cmake
++++ b/cmake/features.cmake
+@@ -208,7 +208,7 @@ ov_dependent_option (ENABLE_SYSTEM_SNAPPY "Enables use of system version of Snap
+     "ENABLE_SNAPPY_COMPRESSION" OFF)
+ # the option is turned off by default, because we are not sure that system version of ZE loader is fresh enough
+ ov_dependent_option (ENABLE_SYSTEM_LEVEL_ZERO "Enables use of system version of Level Zero" OFF
+-    "ENABLE_INTEL_NPU" OFF)
++    "ENABLE_INTEL_NPU OR (ENABLE_INTEL_GPU AND GPU_RT_TYPE STREQUAL L0)" OFF)
+ 
+ ov_dependent_option(ENABLE_JS "Enables JS API building" ${ENABLE_JS_DEFAULT} "NOT ANDROID;NOT EMSCRIPTEN" OFF)
+ 
+diff --git a/src/plugins/intel_gpu/src/runtime/ze/ze_device.cpp b/src/plugins/intel_gpu/src/runtime/ze/ze_device.cpp
+index 82950b8a..f42e927f 100644
+--- a/src/plugins/intel_gpu/src/runtime/ze/ze_device.cpp
++++ b/src/plugins/intel_gpu/src/runtime/ze/ze_device.cpp
+@@ -90,7 +90,7 @@ bool supports_extension(const std::vector<ze_driver_extension_properties_t>& ext
+ }
+ 
+ device_info init_device_info(ze_driver_handle_t driver, ze_device_handle_t device) {
+-    device_info info;
++    device_info info = {};
+ 
+     uint32_t num_ext = 0;
+     OV_ZE_EXPECT(ze::zeDriverGetExtensionProperties(driver, &num_ext, nullptr));
+@@ -237,6 +237,10 @@ device_info init_device_info(ze_driver_handle_t driver, ze_device_handle_t devic
+         info.ip_version = ip_version_properties.ipVersion;
+         info.gfx_ver = parse_version(ip_version_properties.ipVersion);
+     }
++    // Level Zero does not expose the OpenCL non-uniform-work-group query, but
++    // the grouped DynamicQuantize kernels are supported on the known Xe2+
++    // hardware path.  Keep older or unidentified devices conservative.
++    info.supports_non_uniform_work_group = info.gfx_ver.major >= 20;
+     info.sub_device_idx = (std::numeric_limits<uint32_t>::max)();
+ 
+     info.device_id = device_properties.deviceId;

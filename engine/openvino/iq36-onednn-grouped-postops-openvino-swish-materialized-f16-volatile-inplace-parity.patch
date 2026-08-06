@@ -1,0 +1,20 @@
+diff --git a/src/gpu/intel/matmul/grouped_post_ops_gen.cpp b/src/gpu/intel/matmul/grouped_post_ops_gen.cpp
+index 579b0eca8c..95c71f2e0b 100644
+--- a/src/gpu/intel/matmul/grouped_post_ops_gen.cpp
++++ b/src/gpu/intel/matmul/grouped_post_ops_gen.cpp
+@@ -170,11 +170,11 @@ std::string generate_post_ops_microgemm_header(
+             os << "            volatile half eltwise_gate_f16_" << i
+                << " = eltwise_f16_boundary_" << i << ".x[tile_i_" << i
+                << "][tile_s_" << i << "];\n";
+-            os << "            volatile float eltwise_gate_" << i
++            os << "            volatile float eltwise_value_" << i
+                << " = convert_float(eltwise_gate_f16_" << i << ");\n";
+-            os << "            volatile float eltwise_value_" << i
+-               << " = eltwise_gate_" << i << " / (1.0f + native_exp(-("
+-               << to_ocl_float(e.eltwise.alpha) << ") * eltwise_gate_" << i
++            os << "            eltwise_value_" << i
++               << " /= (1.0f + native_exp(-("
++               << to_ocl_float(e.eltwise.alpha) << ") * eltwise_value_" << i
+                << "));\n";
+             os << "            (*c_tile).x[tile_i_" << i << "][tile_s_" << i
+                << "] = (" << to_ocl_float(e.eltwise.scale)

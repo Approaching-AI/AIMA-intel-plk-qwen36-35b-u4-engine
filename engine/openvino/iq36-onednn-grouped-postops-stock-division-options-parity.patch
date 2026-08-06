@@ -1,0 +1,31 @@
+diff --git a/src/gpu/intel/compute/kernel_ctx.hpp b/src/gpu/intel/compute/kernel_ctx.hpp
+index 174b19f201..065dc25712 100644
+--- a/src/gpu/intel/compute/kernel_ctx.hpp
++++ b/src/gpu/intel/compute/kernel_ctx.hpp
+@@ -108,6 +108,10 @@ public:
+ 
+     void add_option(const char *option) { option_set_.insert(option); }
+     void add_option(const std::string &option) { add_option(option.c_str()); }
++    void remove_option(const char *option) { option_set_.erase(option); }
++    void remove_option(const std::string &option) {
++        remove_option(option.c_str());
++    }
+ 
+     bool has_macro(const char *name) const {
+         std::string opt_start = std::string("-D") + name + "=";
+diff --git a/src/gpu/intel/matmul/grouped_micro_gemm.cpp b/src/gpu/intel/matmul/grouped_micro_gemm.cpp
+index ea56b3185f..3f882cc784 100644
+--- a/src/gpu/intel/matmul/grouped_micro_gemm.cpp
++++ b/src/gpu/intel/matmul/grouped_micro_gemm.cpp
+@@ -423,6 +423,11 @@ status_t grouped_micro_gemm_t::pd_t::init(impl::engine_t *engine) {
+     wei_quant_.define_macros(kernel_ctx_, "WEI");
+ 
+     kernel_ctx_.set_data_type(dst_dt);
++    if (find_po_in_chain(po_chain_, po_kind_t::eltwise) != -1) {
++        // Match the stock OpenVINO SwiGLU kernel's division semantics.
++        kernel_ctx_.remove_option(
++                "-cl-fp32-correctly-rounded-divide-sqrt");
++    }
+ 
+     if (gemm_.grfMin > 128 || strategyGRFs_ > 128)
+         kernel_ctx_.add_option("-cl-intel-256-GRF-per-thread");

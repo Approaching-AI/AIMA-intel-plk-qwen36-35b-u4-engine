@@ -1,0 +1,429 @@
+diff --git a/src/gpu/intel/matmul/grouped_micro_gemm.cl b/src/gpu/intel/matmul/grouped_micro_gemm.cl
+index 1ec03b1c5..207168111 100644
+--- a/src/gpu/intel/matmul/grouped_micro_gemm.cl
++++ b/src/gpu/intel/matmul/grouped_micro_gemm.cl
+@@ -16,0 +17,2 @@
++#pragma OPENCL EXTENSION cl_intel_subgroup_matrix_multiply_accumulate : enable
++
+@@ -357,0 +360,331 @@ void load_wei_attr_scales(wei_attr_scales_tile_type *tile,
++#if defined(IQ36_GATEUP_FUSED) || defined(IQ36_DOWN_FUSED)
++#define iq36_row_br MAX(SUBGROUP_SIZE, ugemm_grouped_sg_tile_n)
++#define iq36_row_bc 1
++#define iq36_row_nbr 1
++#define iq36_row_nbc 1
++DECLARE_2D_TILE(iq36_row_tile_type, float, SUBGROUP_SIZE, iq36_row_br,
++        iq36_row_bc, iq36_row_nbr, iq36_row_nbc)
++DECLARE_2D_TILE_HREDUCE(ugemm_grouped_c_type, SUBGROUP_SIZE,
++        ugemm_grouped_c_type_block0, ugemm_grouped_c_type_block1,
++        ugemm_grouped_c_type_nblock0, ugemm_grouped_c_type_nblock1,
++        iq36_row_tile_type, SUBGROUP_SIZE, iq36_row_br, iq36_row_bc,
++        iq36_row_nbr, iq36_row_nbc)
++
++float iq36_silu(float value) {
++    float sigmoid = value >= 0.0f ? 1.0f / (1.0f + exp(-value))
++                                  : exp(value) / (1.0f + exp(value));
++    return value * sigmoid;
++}
++
++#if defined(SRC_DT_S8)
++short iq36_pack_i8_pair(char low, char high) {
++    ushort packed = (ushort)((uchar)low)
++            | ((ushort)((uchar)high) << 8);
++    return as_short(packed);
++}
++
++uint8 iq36_load_min_codes(const global uchar *codes, int output, int block,
++        int blocks, int n) {
++    if (output >= n) return (uint8)(0);
++    uchar8 values = vload8(0, codes + (output * blocks + block) * 8);
++    uint2 packed = as_uint2(values);
++    return (uint8)(packed.s0, packed.s1, 0, 0, 0, 0, 0, 0);
++}
++
++void iq36_subtract_compact_s8(ugemm_grouped_c_type *tile,
++        const global char *sum_low, const global char *sum_high,
++        const global uchar *min_codes, const global float *dmins,
++        const global float *src_scales, int n, int m, int blocks, int ldsrcq,
++        int sg_i0, int sg_j0) {
++    int lane = get_sub_group_local_id();
++    int output0 = sg_i0 + lane;
++    int output1 = output0 + 16;
++    int groups = blocks * 8;
++    for (int block = 0; block < blocks; ++block) {
++        short8 low_pairs = (short8)(0);
++        short8 high_pairs = (short8)(0);
++        float8 row_scales = (float8)(0.0f);
++        for (int row_in_tile = 0; row_in_tile < 8; ++row_in_tile) {
++            int row = sg_j0 + row_in_tile;
++            if (row < m) {
++                row_scales[row_in_tile]
++                        = src_scales[row * ldsrcq + block];
++                if (lane < 4) {
++                    int group = block * 8 + lane * 2;
++                    low_pairs[row_in_tile] = iq36_pack_i8_pair(
++                            sum_low[row * groups + group],
++                            sum_low[row * groups + group + 1]);
++                    high_pairs[row_in_tile] = iq36_pack_i8_pair(
++                            sum_high[row * groups + group],
++                            sum_high[row * groups + group + 1]);
++                }
++            }
++        }
++        uint8 codes0
++                = iq36_load_min_codes(min_codes, output0, block, blocks, n);
++        uint8 codes1
++                = iq36_load_min_codes(min_codes, output1, block, blocks, n);
++        int8 dot0 = intel_sub_group_i8_u8_matrix_mad_k32(
++                low_pairs, codes0, (int8)(0));
++        int8 dot0_high = intel_sub_group_i8_u8_matrix_mad_k32(
++                high_pairs, codes0, (int8)(0));
++        int8 dot1 = intel_sub_group_i8_u8_matrix_mad_k32(
++                low_pairs, codes1, (int8)(0));
++        int8 dot1_high = intel_sub_group_i8_u8_matrix_mad_k32(
++                high_pairs, codes1, (int8)(0));
++        dot0 += dot0_high * 256;
++        dot1 += dot1_high * 256;
++        float dmin0 = output0 < n ? dmins[output0 * blocks + block] : 0.0f;
++        float dmin1 = output1 < n ? dmins[output1 * blocks + block] : 0.0f;
++        tile->x[0] -= convert_float8(dot0) * row_scales * dmin0;
++        tile->x[1] -= convert_float8(dot1) * row_scales * dmin1;
++    }
++}
++#endif
++#endif
++
++#if defined(IQ36_GATEUP_FUSED) && defined(SRC_DT_S8)
++__attribute__((intel_reqd_sub_group_size(SUBGROUP_SIZE)))
++__attribute__((reqd_work_group_size(ugemm_grouped_sg_per_wg_m * SUBGROUP_SIZE,
++        ugemm_grouped_sg_per_wg_n, ugemm_grouped_sg_per_wg_k))) kernel void
++grouped_micro_gemm(const global char *src, long ldsrc,
++        const global uchar *gateup_wei, long4 wei_strides, global half *dst,
++        long lddst, const global int *src_offsets,
++        const global uchar *unused_wei, const global float *src_scales,
++        const global char *sum_low, const long ldsrcq,
++        const global float *weight_scales, const global uchar *min_codes,
++        const long ldweiq, const long n, const long k,
++        const global char *sum_high, const global float *dmins,
++        global float *swiglu_f32, const global float *unused3) {
++    local char *slm = NULL;
++    off_t sg_i = sub_group_broadcast(get_local_id(0) / SUBGROUP_SIZE, 0);
++    off_t sg_j = sub_group_broadcast(get_local_id(1), 0);
++#if defined(IQ36_PERSISTENT_DISPATCH)
++    off_t ldwei = wei_strides[2] == 1 ? wei_strides[1] : wei_strides[2];
++    const global uint *task_coordinates
++            = (const global uint *)unused_wei;
++    const global uint *dispatch_metadata = (const global uint *)unused3;
++    uint task = get_group_id(2) * 8U + (uint)sg_j;
++    const uint task_count = dispatch_metadata[5];
++    const uint task_stride = get_num_groups(2) * 8U;
++    for (; task < task_count; task += task_stride) {
++        const uint coordinate = task_coordinates[task];
++        off_t batch = coordinate & 255U;
++        off_t wg_i0 = ((coordinate >> 8) & 127U)
++                * ugemm_grouped_wg_tile_m;
++        off_t wg_j0 = (coordinate >> 15) * 8;
++        int2 src_range = *(global int2 *)(
++                src_offsets + (batch > 0 ? batch - 1 : batch));
++        off_t m = batch > 0 ? (src_range.y - src_range.x) : src_range.x;
++        off_t src_offset = batch > 0 ? src_range.x : 0;
++        if (wg_j0 >= m) continue;
++        off_t sg_i0 = wg_i0;
++        off_t sg_j0 = wg_j0;
++        const global char *task_src = src + src_offset * ldsrc;
++        global half *task_dst = dst + src_offset * lddst;
++        global float *task_swiglu_f32
++                = swiglu_f32 + src_offset * lddst;
++        const global float *task_src_scales
++                = src_scales + src_offset * ldsrcq;
++        const global char *task_sum_low
++                = sum_low + src_offset * (k / 32);
++        const global char *task_sum_high
++                = sum_high + src_offset * (k / 32);
++        const global uchar *task_gateup_wei
++                = gateup_wei + batch * wei_strides[0] / 2;
++        const global float *task_weight_scales
++                = weight_scales + batch * n * (k / 32);
++        const global uchar *task_min_codes
++                = min_codes + batch * n * (k / 256) * 8;
++        const global float *task_dmins
++                = dmins + batch * n * (k / 256);
++        ugemm_grouped_c_type gateup = ugemm_grouped(task_gateup_wei, ldwei,
++                task_src, ldsrc, n, m, k, wg_i0, wg_j0, 0, 0, 0, slm,
++                task_weight_scales, ldweiq, task_src_scales, ldsrcq);
++        iq36_subtract_compact_s8(&gateup, task_sum_low, task_sum_high,
++                task_min_codes, task_dmins, task_src_scales, n, m, k / 256,
++                ldsrcq, sg_i0, sg_j0);
++        _Pragma("unroll") for (int j = 0;
++                j < ugemm_grouped_c_type_block1
++                                * ugemm_grouped_c_type_nblock1;
++                ++j) {
++            _Pragma("unroll") for (int i0 = 0;
++                    i0 < ugemm_grouped_c_type_block0
++                                    * ugemm_grouped_c_type_nblock0;
++                    i0 += SUBGROUP_SIZE) {
++                float value = tile_access(gateup, i0, j, SUBGROUP_SIZE,
++                        ugemm_grouped_c_type_block0,
++                        ugemm_grouped_c_type_block1,
++                        ugemm_grouped_c_type_nblock0);
++                float paired = intel_sub_group_shuffle(
++                        value, get_sub_group_local_id() | 1);
++                off_t interleaved = sg_i0 + i0 + get_sub_group_local_id();
++                off_t row = sg_j0 + j;
++                if ((get_sub_group_local_id() & 1) == 0 && interleaved < n
++                        && row < m) {
++                    float activated = iq36_silu(value) * paired;
++                    task_dst[row * lddst + interleaved / 2]
++                            = convert_half_rte(activated);
++                    task_swiglu_f32[row * lddst + interleaved / 2]
++                            = activated;
++                }
++            }
++        }
++    }
++#else
++    off_t wg_i0 = get_group_id(0) * ugemm_grouped_wg_tile_m;
++    off_t batch = sub_group_broadcast(get_group_id(2), 0);
++    int2 src_range
++            = *(global int2 *)(src_offsets + (batch > 0 ? batch - 1 : batch));
++    off_t m = batch > 0 ? (src_range.y - src_range.x) : src_range.x;
++    off_t src_offset = batch > 0 ? src_range.x : 0;
++    off_t wg_j0 = get_group_id(1) * ugemm_grouped_wg_tile_n;
++    if (wg_j0 >= m) return;
++    off_t sg_i0 = wg_i0 + sg_i * ugemm_grouped_sg_tile_m;
++    off_t sg_j0 = wg_j0 + sg_j * ugemm_grouped_sg_tile_n;
++    off_t ldwei = wei_strides[2] == 1 ? wei_strides[1] : wei_strides[2];
++    src += src_offset * ldsrc;
++    dst += src_offset * lddst;
++    swiglu_f32 += src_offset * lddst;
++    src_scales += src_offset * ldsrcq;
++    sum_low += src_offset * (k / 32);
++    sum_high += src_offset * (k / 32);
++    gateup_wei += batch * wei_strides[0] / 2;
++    weight_scales += batch * n * (k / 32);
++    min_codes += batch * n * (k / 256) * 8;
++    dmins += batch * n * (k / 256);
++    ugemm_grouped_c_type gateup = ugemm_grouped(gateup_wei, ldwei, src,
++            ldsrc, n, m, k, wg_i0, wg_j0, 0, sg_i, sg_j, slm,
++            weight_scales, ldweiq, src_scales, ldsrcq);
++    iq36_subtract_compact_s8(&gateup, sum_low, sum_high, min_codes, dmins,
++            src_scales, n, m, k / 256, ldsrcq, sg_i0, sg_j0);
++    _Pragma("unroll") for (int j = 0;
++            j < ugemm_grouped_c_type_block1
++                            * ugemm_grouped_c_type_nblock1;
++            ++j) {
++        _Pragma("unroll") for (int i0 = 0;
++                i0 < ugemm_grouped_c_type_block0
++                                * ugemm_grouped_c_type_nblock0;
++                i0 += SUBGROUP_SIZE) {
++            float value = tile_access(gateup, i0, j, SUBGROUP_SIZE,
++                    ugemm_grouped_c_type_block0,
++                    ugemm_grouped_c_type_block1,
++                    ugemm_grouped_c_type_nblock0);
++            float paired = intel_sub_group_shuffle(
++                    value, get_sub_group_local_id() | 1);
++            off_t interleaved = sg_i0 + i0 + get_sub_group_local_id();
++            off_t row = sg_j0 + j;
++            if ((get_sub_group_local_id() & 1) == 0 && interleaved < n
++                    && row < m) {
++                float activated = iq36_silu(value) * paired;
++                dst[row * lddst + interleaved / 2]
++                        = convert_half_rte(activated);
++                swiglu_f32[row * lddst + interleaved / 2] = activated;
++            }
++        }
++    }
++#endif
++}
++
++#elif defined(IQ36_DOWN_FUSED) && defined(SRC_DT_S8)
++__attribute__((intel_reqd_sub_group_size(SUBGROUP_SIZE)))
++__attribute__((reqd_work_group_size(ugemm_grouped_sg_per_wg_m * SUBGROUP_SIZE,
++        ugemm_grouped_sg_per_wg_n, ugemm_grouped_sg_per_wg_k))) kernel void
++grouped_micro_gemm(const global char *src, long ldsrc,
++        const global uchar *wei, long4 wei_strides, global DST_DATA_T *dst,
++        long lddst, const global int *src_offsets,
++        const global int *unused_offsets, const global float *src_scales,
++        const global char *sum_low, const long ldsrcq,
++        const global float *weight_scales, const global uchar *min_codes,
++        const long ldweiq, const long n, const long k,
++        const global float *router_weights, const global char *sum_high,
++        const global float *dmins, const global float *unused2) {
++    local char *slm = NULL;
++    off_t sg_i = sub_group_broadcast(get_local_id(0) / SUBGROUP_SIZE, 0);
++    off_t sg_j = sub_group_broadcast(get_local_id(1), 0);
++#if defined(IQ36_PERSISTENT_DISPATCH)
++    off_t ldwei = wei_strides[2] == 1 ? wei_strides[1] : wei_strides[2];
++    const global uint *task_coordinates
++            = (const global uint *)unused_offsets;
++    const global uint *dispatch_metadata = (const global uint *)unused2;
++    uint task = get_group_id(2) * 4U + (uint)sg_j;
++    const uint task_count = dispatch_metadata[6];
++    const uint task_stride = get_num_groups(2) * 4U;
++    for (; task < task_count; task += task_stride) {
++        const uint coordinate = task_coordinates[task];
++        off_t batch = coordinate & 255U;
++        off_t wg_i0 = ((coordinate >> 8) & 127U)
++                * ugemm_grouped_wg_tile_m;
++        off_t wg_j0 = (coordinate >> 15) * 8;
++        int2 src_range = *(global int2 *)(
++                src_offsets + (batch > 0 ? batch - 1 : batch));
++        off_t m = batch > 0 ? (src_range.y - src_range.x) : src_range.x;
++        off_t src_offset = batch > 0 ? src_range.x : 0;
++        if (wg_j0 >= m) continue;
++        off_t sg_i0 = wg_i0 + sg_i * ugemm_grouped_sg_tile_m;
++        off_t sg_j0 = wg_j0;
++        const global char *task_src = src + src_offset * ldsrc;
++        global DST_DATA_T *task_dst = dst + src_offset * lddst;
++        const global float *task_src_scales
++                = src_scales + src_offset * ldsrcq;
++        const global char *task_sum_low
++                = sum_low + src_offset * (k / 32);
++        const global char *task_sum_high
++                = sum_high + src_offset * (k / 32);
++        const global float *task_router_weights
++                = router_weights + src_offset;
++        const global uchar *task_wei
++                = wei + batch * wei_strides[0] / 2;
++        const global float *task_weight_scales
++                = weight_scales + batch * n * (k / 32);
++        const global uchar *task_min_codes
++                = min_codes + batch * n * (k / 256) * 8;
++        const global float *task_dmins
++                = dmins + batch * n * (k / 256);
++        ugemm_grouped_c_type result = ugemm_grouped(task_wei, ldwei, task_src,
++                ldsrc, n, m, k, wg_i0, wg_j0, 0, sg_i, 0, slm,
++                task_weight_scales, ldweiq, task_src_scales, ldsrcq);
++        iq36_subtract_compact_s8(&result, task_sum_low, task_sum_high,
++                task_min_codes, task_dmins, task_src_scales, n, m, k / 256,
++                ldsrcq, sg_i0, sg_j0);
++        iq36_row_tile_type weight_tile;
++        tile_load(&weight_tile, task_router_weights, m, 1, 1, sg_j0, 0);
++        tile_hbroadcast_mul(&result, weight_tile);
++        store_results(
++                &result, task_dst, n, m, lddst, sg_i0, sg_j0);
++    }
++#else
++    off_t wg_i0 = get_group_id(0) * ugemm_grouped_wg_tile_m;
++    off_t batch = sub_group_broadcast(get_group_id(2), 0);
++    int2 src_range
++            = *(global int2 *)(src_offsets + (batch > 0 ? batch - 1 : batch));
++    off_t m = batch > 0 ? (src_range.y - src_range.x) : src_range.x;
++    off_t src_offset = batch > 0 ? src_range.x : 0;
++    off_t wg_j0 = get_group_id(1) * ugemm_grouped_wg_tile_n;
++    if (wg_j0 >= m) return;
++    off_t sg_i0 = wg_i0 + sg_i * ugemm_grouped_sg_tile_m;
++    off_t sg_j0 = wg_j0 + sg_j * ugemm_grouped_sg_tile_n;
++    off_t ldwei = wei_strides[2] == 1 ? wei_strides[1] : wei_strides[2];
++    src += src_offset * ldsrc;
++    dst += src_offset * lddst;
++    src_scales += src_offset * ldsrcq;
++    sum_low += src_offset * (k / 32);
++    sum_high += src_offset * (k / 32);
++    router_weights += src_offset;
++    wei += batch * wei_strides[0] / 2;
++    weight_scales += batch * n * (k / 32);
++    min_codes += batch * n * (k / 256) * 8;
++    dmins += batch * n * (k / 256);
++    ugemm_grouped_c_type result = ugemm_grouped(wei, ldwei, src, ldsrc, n, m,
++            k, wg_i0, wg_j0, 0, sg_i, sg_j, slm, weight_scales, ldweiq,
++            src_scales, ldsrcq);
++    iq36_subtract_compact_s8(&result, sum_low, sum_high, min_codes, dmins,
++            src_scales, n, m, k / 256, ldsrcq, sg_i0, sg_j0);
++    iq36_row_tile_type weight_tile;
++    tile_load(&weight_tile, router_weights, m, 1, 1, sg_j0, 0);
++    tile_hbroadcast_mul(&result, weight_tile);
++    store_results(&result, dst, n, m, lddst, sg_i0, sg_j0);
++#endif
++}
++
++#else
+@@ -476,0 +810 @@ grouped_micro_gemm(const global SRC_DATA_T *src, long ldsrc,
++#endif
+diff --git a/src/gpu/intel/matmul/grouped_micro_gemm.cpp b/src/gpu/intel/matmul/grouped_micro_gemm.cpp
+index db48ac66c..1d8d31881 100644
+--- a/src/gpu/intel/matmul/grouped_micro_gemm.cpp
++++ b/src/gpu/intel/matmul/grouped_micro_gemm.cpp
+@@ -29,0 +30 @@
++#include <cstdlib>
+@@ -168 +169,2 @@ status_t grouped_micro_gemm_t::pd_t::init_microkernels(impl::engine_t *engine) {
+-    if (problem.Ta.isInteger() && problem.Tb.isInteger()
++    if (!std::getenv("IQ36_GENERATE_S8_GROUPED") && problem.Ta.isInteger()
++            && problem.Tb.isInteger()
+@@ -193 +195,12 @@ status_t grouped_micro_gemm_t::pd_t::init_microkernels(impl::engine_t *engine) {
+-        newStrat = gpu_utils::dev_getenv("GRPGEMM_USTRATEGY", newStrat);
++        if (std::getenv("IQ36_GROUPED_M8_SOURCE_PREFLIGHT")) {
++            const char *kind = std::getenv("IQ36_GROUPED_FUSED_KIND");
++            newStrat = kind && std::string(kind) == "gateup"
++                    ? "32 8 1 0 aT64/0{cc}+M64,64@128{cc} "
++                      "aM32/0{cc}+M32,32@64{cc} rb wg 1x8 sys xaf k1 "
++                      "grf128 vav di sr pk32 np"
++                    : "32 8 1 0 aT64/0{cc}+M64,64@128{cc} "
++                      "aM32/0{cc}+M32,32@64{cc} rb wg 2x4 sys xaf k1 "
++                      "grf128 vav di sr pk32 np";
++        } else {
++            newStrat = gpu_utils::dev_getenv("GRPGEMM_USTRATEGY", newStrat);
++        }
+@@ -534,0 +548,8 @@ status_t grouped_micro_gemm_t::pd_t::init(impl::engine_t *engine) {
++    if (const char *kind = std::getenv("IQ36_GROUPED_FUSED_KIND")) {
++        if (std::string(kind) == "gateup")
++            kernel_ctx_.define_int("IQ36_GATEUP_FUSED", 1);
++        else if (std::string(kind) == "down")
++            kernel_ctx_.define_int("IQ36_DOWN_FUSED", 1);
++    }
++    if (std::getenv("IQ36_GROUPED_PERSISTENT_DISPATCH"))
++        kernel_ctx_.define_int("IQ36_PERSISTENT_DISPATCH", 1);
+diff --git a/src/gpu/intel/ocl/engine.cpp b/src/gpu/intel/ocl/engine.cpp
+index c1e8934e9..9a2d33790 100644
+--- a/src/gpu/intel/ocl/engine.cpp
++++ b/src/gpu/intel/ocl/engine.cpp
+@@ -17,0 +18,2 @@
++#include <cstdio>
++#include <cstdlib>
+@@ -268,0 +271,21 @@ inline status_t fuse_microkernels(cl_context context, cl_device_id device,
++        if (const char *prefix
++                = std::getenv("IQ36_DUMP_FUSED_PROGRAM_PREFIX")) {
++            static int dump_index = 0;
++            size_t program_binary_size = 0;
++            OCL_CHECK(xpu::ocl::clGetProgramInfo(program,
++                    CL_PROGRAM_BINARY_SIZES, sizeof(program_binary_size),
++                    &program_binary_size, nullptr));
++            std::vector<uint8_t> program_binary(program_binary_size);
++            uint8_t *program_binary_data = program_binary.data();
++            OCL_CHECK(xpu::ocl::clGetProgramInfo(program, CL_PROGRAM_BINARIES,
++                    sizeof(program_binary_data), &program_binary_data,
++                    nullptr));
++            std::ostringstream filename;
++            filename << prefix << "." << dump_index++ << ".bin";
++            if (FILE *output = std::fopen(filename.str().c_str(), "wb")) {
++                std::fwrite(program_binary.data(), program_binary.size(), 1,
++                        output);
++                std::fclose(output);
++                if (std::getenv("IQ36_EXIT_AFTER_FUSED_DUMP")) std::_Exit(0);
++            }
++        }
+diff --git a/src/gpu/intel/ocl/kernel.cpp b/src/gpu/intel/ocl/kernel.cpp
+index b7840018b..76db0c7a0 100644
+--- a/src/gpu/intel/ocl/kernel.cpp
++++ b/src/gpu/intel/ocl/kernel.cpp
+@@ -263,0 +264,21 @@ status_t kernel_t::dump() const {
++    cl_program program = nullptr;
++    OCL_CHECK(xpu::ocl::clGetKernelInfo(ocl_kernel(), CL_KERNEL_PROGRAM,
++            sizeof(program), &program, nullptr));
++    cl_uint device_count = 0;
++    OCL_CHECK(xpu::ocl::clGetProgramInfo(program, CL_PROGRAM_NUM_DEVICES,
++            sizeof(device_count), &device_count, nullptr));
++    std::vector<size_t> sizes(device_count);
++    OCL_CHECK(xpu::ocl::clGetProgramInfo(program, CL_PROGRAM_BINARY_SIZES,
++            sizes.size() * sizeof(size_t), sizes.data(), nullptr));
++    std::vector<std::vector<uint8_t>> programs(device_count);
++    std::vector<uint8_t *> pointers(device_count);
++    for (cl_uint index = 0; index < device_count; ++index) {
++        programs[index].resize(sizes[index]);
++        pointers[index] = programs[index].data();
++    }
++    OCL_CHECK(xpu::ocl::clGetProgramInfo(program, CL_PROGRAM_BINARIES,
++            pointers.size() * sizeof(uint8_t *), pointers.data(), nullptr));
++    for (cl_uint index = 0; index < device_count; ++index) {
++        CHECK(gpu_utils::dump_kernel_binary(
++                programs[index], name() + "_program"));
++    }

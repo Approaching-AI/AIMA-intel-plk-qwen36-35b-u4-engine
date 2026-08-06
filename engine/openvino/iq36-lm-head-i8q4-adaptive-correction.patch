@@ -1,0 +1,258 @@
+diff --git a/src/plugins/intel_gpu/src/graph/impls/ocl/iq36_lm_head_i8q4.cpp b/src/plugins/intel_gpu/src/graph/impls/ocl/iq36_lm_head_i8q4.cpp
+--- a/src/plugins/intel_gpu/src/graph/impls/ocl/iq36_lm_head_i8q4.cpp
++++ b/src/plugins/intel_gpu/src/graph/impls/ocl/iq36_lm_head_i8q4.cpp
+@@ -32,6 +32,8 @@
+ constexpr size_t kTopK = 8;
+ constexpr size_t kRowsPerTopBlock = 256;
+ constexpr size_t kTopBlockCount = kRows / kRowsPerTopBlock;
++constexpr size_t kAdaptiveCorrectionCapacity = 4096;
++constexpr size_t kAdaptiveCorrectionDelta = 11;
+ constexpr size_t kBinaryCodeBytesPerStripe = 2048;
+ constexpr size_t kBinaryStripeBytes = 2128;
+ constexpr size_t kBinaryPackedBytes =
+@@ -49,6 +51,12 @@
+ constexpr char kCorrectionKernelName[] = "iq36_lm_head_i8_exact_topk8_correction_f16";
+ constexpr char kDirectCorrectionKernelName[] =
+     "iq36_lm_head_i8_direct_topk8_correction_f16";
++constexpr char kAdaptiveResetKernelName[] =
++    "iq36_lm_head_adaptive_correction_reset";
++constexpr char kAdaptiveCollectKernelName[] =
++    "iq36_lm_head_adaptive_correction_collect_f16";
++constexpr char kAdaptiveCorrectionKernelName[] =
++    "iq36_lm_head_i8_adaptive_correction_f16";
+ constexpr char kBinaryQuantizeKernelName[] =
+     "iq36_lm_head_q8_group256_f16_sums";
+ constexpr char kBinaryMatvecKernelName[] =
+@@ -574,7 +582,7 @@
+ kernel_selector::kernel_data make_kernel_data() {
+     kernel_selector::kernel_data data;
+     data.kernelName = kMatvecKernelName;
+-    data.kernels.resize(7);
++    data.kernels.resize(12);
+     const std::string source = R"CLC(
+ #pragma OPENCL EXTENSION cl_khr_fp16 : enable
+ #pragma OPENCL EXTENSION cl_khr_subgroups : enable
+@@ -585,16 +593,24 @@
+ #define IQ36_CODE_BYTES_PER_GROUP8 512U
+ #define IQ36_CODE_BYTES_PER_STRIPE 8192U
+ #define IQ36_STRIPE_BYTES 8224U
++#define IQ36_ADAPTIVE_CORRECTION_CAPACITY 4096U
++#define IQ36_ADAPTIVE_CORRECTION_DELTA 11.0f
+ 
+ #if !defined(IQ36_QUANTIZE_KERNEL) && !defined(IQ36_TOPK_MATVEC_KERNEL) && \
+     !defined(IQ36_OUTPUT_TOPK_KERNEL) && !defined(IQ36_TOPK_MERGE_KERNEL) && \
+-    !defined(IQ36_CORRECTION_KERNEL) && !defined(IQ36_DIRECT_CORRECTION_KERNEL)
++    !defined(IQ36_CORRECTION_KERNEL) && !defined(IQ36_DIRECT_CORRECTION_KERNEL) && \
++    !defined(IQ36_ADAPTIVE_RESET_KERNEL) && \
++    !defined(IQ36_ADAPTIVE_COLLECT_KERNEL) && \
++    !defined(IQ36_ADAPTIVE_CORRECTION_KERNEL)
+ #define IQ36_QUANTIZE_KERNEL 1
+ #define IQ36_TOPK_MATVEC_KERNEL 1
+ #define IQ36_OUTPUT_TOPK_KERNEL 1
+ #define IQ36_TOPK_MERGE_KERNEL 1
+ #define IQ36_CORRECTION_KERNEL 1
+ #define IQ36_DIRECT_CORRECTION_KERNEL 1
++#define IQ36_ADAPTIVE_RESET_KERNEL 1
++#define IQ36_ADAPTIVE_COLLECT_KERNEL 1
++#define IQ36_ADAPTIVE_CORRECTION_KERNEL 1
+ #endif
+ 
+ #if defined(IQ36_TOPK_MATVEC_KERNEL)
+@@ -909,6 +925,69 @@
+   }
+ }
+ #endif
++
++#if defined(IQ36_ADAPTIVE_RESET_KERNEL)
++__attribute__((reqd_work_group_size(1, 1, 1)))
++__kernel void iq36_lm_head_adaptive_correction_reset(
++    __global uint* selected_count) {
++  selected_count[0] = 0U;
++}
++#endif
++
++#if defined(IQ36_ADAPTIVE_COLLECT_KERNEL)
++__attribute__((reqd_work_group_size(256, 1, 1)))
++__kernel void iq36_lm_head_adaptive_correction_collect_f16(
++    __global const half* output,
++    __global const float* top_values,
++    volatile __global uint* selected_count,
++    __global int* selected_ids) {
++  const uint row = (uint)get_global_id(0);
++  if (row >= IQ36_ROWS) return;
++  const float cutoff = top_values[0] - IQ36_ADAPTIVE_CORRECTION_DELTA;
++  if (convert_float(output[row]) < cutoff) return;
++  const uint slot = atomic_inc(selected_count);
++  if (slot < IQ36_ADAPTIVE_CORRECTION_CAPACITY)
++    selected_ids[slot] = (int)row;
++}
++#endif
++
++#if defined(IQ36_ADAPTIVE_CORRECTION_KERNEL)
++__attribute__((reqd_work_group_size(64, 1, 1)))
++__attribute__((intel_reqd_sub_group_size(16)))
++__kernel void iq36_lm_head_i8_adaptive_correction_f16(
++    __global const char* weights,
++    __global const half* weight_scales,
++    __global const half* input,
++    __global const uint* selected_count,
++    __global const int* selected_ids,
++    __global half* output) {
++  const uint selected = (uint)get_group_id(0);
++  const uint lane = (uint)get_local_id(0);
++  const uint count = min(selected_count[0], IQ36_ADAPTIVE_CORRECTION_CAPACITY);
++  if (selected >= count) return;
++  const int signed_row = selected_ids[selected];
++  if (signed_row < 0 || signed_row >= (int)IQ36_ROWS) return;
++  const uint row = (uint)signed_row;
++  const ulong row_base = (ulong)row * 2048UL;
++  const uint lane_base = lane * 32U;
++  float dot_sum = 0.0f;
++  for (uint chunk = 0U; chunk < 8U; ++chunk) {
++    const uint element = lane_base + chunk * 4U;
++    dot_sum += dot(
++        convert_float4(vload4(0, weights + row_base + element)),
++        convert_float4(vload4(0, input + element)));
++  }
++  __local float partial[64];
++  partial[lane] = dot_sum;
++  barrier(CLK_LOCAL_MEM_FENCE);
++  if (lane == 0U) {
++    float value = 0.0f;
++    for (uint contributor = 0U; contributor < 64U; ++contributor)
++      value += partial[contributor];
++    output[row] = convert_half_rte(value * convert_float(weight_scales[row]));
++  }
++}
++#endif
+ )CLC";
+ 
+     using argument_type = kernel_selector::kernel_argument_types;
+@@ -1026,6 +1105,85 @@
+         {argument_type::INTERNAL_BUFFER, 4},
+         {argument_type::OUTPUT, 0},
+     };
++
++    auto& adaptive_rerank = data.kernels[7];
++    adaptive_rerank.code.kernelString = std::make_shared<kernel_selector::kernel_string>();
++    adaptive_rerank.code.kernelString->entry_point = kOutputSelectKernelName;
++    adaptive_rerank.code.kernelString->str = source;
++    adaptive_rerank.code.kernelString->options =
++        "-cl-std=CL3.0 -D IQ36_OUTPUT_TOPK_KERNEL=1";
++    adaptive_rerank.code.kernelString->batch_compilation = false;
++    adaptive_rerank.params.workGroups.global = {kRows, 1, 1};
++    adaptive_rerank.params.workGroups.local = {256, 1, 1};
++    adaptive_rerank.params.arguments = {
++        {argument_type::OUTPUT, 0},
++        {argument_type::INTERNAL_BUFFER, 2},
++        {argument_type::INTERNAL_BUFFER, 3},
++    };
++
++    auto& adaptive_merge = data.kernels[8];
++    adaptive_merge.code.kernelString = std::make_shared<kernel_selector::kernel_string>();
++    adaptive_merge.code.kernelString->entry_point = kMergeKernelName;
++    adaptive_merge.code.kernelString->str = source;
++    adaptive_merge.code.kernelString->options =
++        "-cl-std=CL3.0 -D IQ36_TOPK_MERGE_KERNEL=1";
++    adaptive_merge.code.kernelString->batch_compilation = false;
++    adaptive_merge.params.workGroups.global = {256, 1, 1};
++    adaptive_merge.params.workGroups.local = {256, 1, 1};
++    adaptive_merge.params.arguments = {
++        {argument_type::INTERNAL_BUFFER, 2},
++        {argument_type::INTERNAL_BUFFER, 3},
++        {argument_type::INTERNAL_BUFFER, 4},
++        {argument_type::INTERNAL_BUFFER, 5},
++    };
++
++    auto& adaptive_reset = data.kernels[9];
++    adaptive_reset.code.kernelString = std::make_shared<kernel_selector::kernel_string>();
++    adaptive_reset.code.kernelString->entry_point = kAdaptiveResetKernelName;
++    adaptive_reset.code.kernelString->str = source;
++    adaptive_reset.code.kernelString->options =
++        "-cl-std=CL3.0 -D IQ36_ADAPTIVE_RESET_KERNEL=1";
++    adaptive_reset.code.kernelString->batch_compilation = false;
++    adaptive_reset.params.workGroups.global = {1, 1, 1};
++    adaptive_reset.params.workGroups.local = {1, 1, 1};
++    adaptive_reset.params.arguments = {
++        {argument_type::INTERNAL_BUFFER, 6},
++    };
++
++    auto& adaptive_collect = data.kernels[10];
++    adaptive_collect.code.kernelString = std::make_shared<kernel_selector::kernel_string>();
++    adaptive_collect.code.kernelString->entry_point = kAdaptiveCollectKernelName;
++    adaptive_collect.code.kernelString->str = source;
++    adaptive_collect.code.kernelString->options =
++        "-cl-std=CL3.0 -D IQ36_ADAPTIVE_COLLECT_KERNEL=1";
++    adaptive_collect.code.kernelString->batch_compilation = false;
++    adaptive_collect.params.workGroups.global = {kRows, 1, 1};
++    adaptive_collect.params.workGroups.local = {256, 1, 1};
++    adaptive_collect.params.arguments = {
++        {argument_type::OUTPUT, 0},
++        {argument_type::INTERNAL_BUFFER, 5},
++        {argument_type::INTERNAL_BUFFER, 6},
++        {argument_type::INTERNAL_BUFFER, 7},
++    };
++
++    auto& adaptive_correction = data.kernels[11];
++    adaptive_correction.code.kernelString = std::make_shared<kernel_selector::kernel_string>();
++    adaptive_correction.code.kernelString->entry_point = kAdaptiveCorrectionKernelName;
++    adaptive_correction.code.kernelString->str = source;
++    adaptive_correction.code.kernelString->options =
++        "-cl-std=CL3.0 -D IQ36_ADAPTIVE_CORRECTION_KERNEL=1";
++    adaptive_correction.code.kernelString->batch_compilation = false;
++    adaptive_correction.params.workGroups.global = {
++        kAdaptiveCorrectionCapacity * 64, 1, 1};
++    adaptive_correction.params.workGroups.local = {64, 1, 1};
++    adaptive_correction.params.arguments = {
++        {argument_type::INPUT, 1},
++        {argument_type::INPUT, 2},
++        {argument_type::INPUT, 0},
++        {argument_type::INTERNAL_BUFFER, 6},
++        {argument_type::INTERNAL_BUFFER, 7},
++        {argument_type::OUTPUT, 0},
++    };
+     data.internalBufferDataType = kernel_selector::Datatype::UINT8;
+     data.internalBuffers.emplace_back(kColumns);
+     data.internalBuffers.emplace_back(8 * sizeof(float));
+@@ -1033,6 +1191,9 @@
+     data.internalBuffers.emplace_back(kTopBlockCount * kTopK * sizeof(float));
+     data.internalBuffers.emplace_back(kTopK * sizeof(int32_t));
+     data.internalBuffers.emplace_back(kTopK * sizeof(float));
++    data.internalBuffers.emplace_back(sizeof(uint32_t));
++    data.internalBuffers.emplace_back(
++        kAdaptiveCorrectionCapacity * sizeof(int32_t));
+     data.needs_sub_kernels_sync = true;
+     return data;
+ }
+@@ -1251,8 +1412,12 @@
+                      ",\"exact_correction_rows\":" +
+                          std::to_string(binary ? kBinaryCorrectionRows : kTopK) +
+                      ",\"direct_correction_topk\":" + std::to_string(kTopK) +
++                     ",\"adaptive_correction_delta\":" +
++                         std::to_string(binary ? 0 : kAdaptiveCorrectionDelta) +
++                     ",\"adaptive_correction_capacity\":" +
++                         std::to_string(binary ? 0 : kAdaptiveCorrectionCapacity) +
+                      ",\"exact_correction_passes\":" +
+-                         std::to_string(2) +
++                         std::to_string(binary ? 2 : 3) +
+                      ",\"correction_reuses_source_weights\":true" +
+                      ",\"source_weight_format\":\"" + weights_layout.format.to_string() +
+                      "\",\"source_scale_format\":\"" + scales_layout.format.to_string() + "\"}");
+@@ -1349,9 +1514,15 @@
+                     std::string(kQuantizeKernelName) + "+" + kMatvecKernelName + "+" +
+                         kMergeKernelName + "+" + kCorrectionKernelName + "+" +
+                         kOutputSelectKernelName + "+" + kMergeKernelName + "+" +
+-                        kDirectCorrectionKernelName) +
++                        kDirectCorrectionKernelName + "+" + kOutputSelectKernelName + "+" +
++                        kMergeKernelName + "+" + kAdaptiveResetKernelName + "+" +
++                        kAdaptiveCollectKernelName + "+" + kAdaptiveCorrectionKernelName) +
+                  "\",\"direct_correction_topk\":" + std::to_string(kTopK) +
+-                 ",\"correction_passes\":" + std::to_string(2) +
++                 ",\"adaptive_correction_delta\":" +
++                     std::to_string(binary ? 0 : kAdaptiveCorrectionDelta) +
++                 ",\"adaptive_correction_capacity\":" +
++                     std::to_string(binary ? 0 : kAdaptiveCorrectionCapacity) +
++                 ",\"correction_passes\":" + std::to_string(binary ? 2 : 3) +
+                  ",\"global\":[248320,1,1],\"local\":[256,1,1]}");
+     return std::make_unique<IQ36LMHeadI8Q4Impl>(data);
+ }

@@ -1,0 +1,697 @@
+{
+  "contract_version": "0.1",
+  "workstream": "intel-qwen36-35b-a3b-gguf-q4km",
+  "model": {
+    "path": "/home/intel/models/gguf/qwen3.6-35b-a3b-q4_k_m.gguf",
+    "sha256": "d42becf903ed7093d438c0d9f44afc136756b6b8f766121e9066fb888a2dc36e",
+    "batch_size": 1
+  },
+  "required_bundle_fields": [
+    "token_ids",
+    "top_k_logprobs",
+    "teacher_forced_distribution_references",
+    "per_boundary_reference_inputs",
+    "per_boundary_reference_outputs"
+  ],
+  "required_bundle_paths": [
+    "manifest.json",
+    "correctness.json",
+    "token-topk-references.jsonl",
+    "teacher-forced-distribution-references.jsonl",
+    "boundary-references/inputs.jsonl",
+    "boundary-references/outputs.jsonl"
+  ],
+  "boundary_types": [
+    "embedding",
+    "layer_input_rmsnorm",
+    "qkv_projection",
+    "rope",
+    "attention",
+    "attention_output_projection",
+    "post_attention_residual",
+    "ffn_rmsnorm",
+    "router_topk",
+    "selected_expert_gate_up",
+    "swiglu",
+    "selected_expert_down",
+    "shared_expert",
+    "moe_residual",
+    "final_norm",
+    "lm_head",
+    "sampler"
+  ],
+  "available_seed_artifacts": {
+    "deterministic_cpu_llama_cpp_token_topk_seed": {
+      "available": true,
+      "evidence_path": "output/r0-cpu-llama-oracle-seed-20260626T033706Z/audit.json",
+      "staging_tool": "tools/intel-qwen36-oracle-seed-stage.py",
+      "staged_schema_version": "intel-qwen36-oracle-seed-stage-v0",
+      "replay_tool": "tools/intel-qwen36-oracle-seed-replay.py",
+      "latest_replay_self_check": {
+        "path": "output/r0-oracle-seed-replay-20260626T034841Z",
+        "correctness_path": "output/r0-oracle-seed-replay-20260626T034841Z/correctness.json",
+        "required_checks_passed": true
+      },
+      "teacher_forced_distribution_seed_tool": "tools/intel-qwen36-teacher-forced-seed-stage.py",
+      "teacher_forced_distribution_seed_schema_version": "intel-qwen36-teacher-forced-distribution-seed-v0",
+      "latest_teacher_forced_distribution_seed": {
+        "path": "output/r0-teacher-forced-distribution-seed-20260626T035426Z",
+        "manifest_path": "output/r0-teacher-forced-distribution-seed-20260626T035426Z/manifest.json",
+        "correctness_path": "output/r0-teacher-forced-distribution-seed-20260626T035426Z/correctness.json",
+        "distribution_seed_path": "output/r0-teacher-forced-distribution-seed-20260626T035426Z/teacher-forced-distribution-seed.jsonl",
+        "distribution_positions": 91,
+        "required_checks_passed": true,
+        "full_acceptance_bundle": false
+      },
+      "latest_staged_seed": {
+        "path": "output/r0-oracle-seed-stage-20260626T034356Z",
+        "manifest_path": "output/r0-oracle-seed-stage-20260626T034356Z/manifest.json",
+        "token_topk_seed_path": "output/r0-oracle-seed-stage-20260626T034356Z/token-topk-seed.jsonl",
+        "r0_gate_status_path": "output/r0-oracle-seed-stage-20260626T034356Z/r0-gate-status.json"
+      },
+      "selected_suites": [
+        "short",
+        "router-stability"
+      ],
+      "case_count": 6,
+      "available_subgates": [
+        "prompt_token_ids",
+        "first_token_top_k_logprobs",
+        "short_greedy_generated_token_ids",
+        "short_router_teacher_forced_distribution_seed"
+      ],
+      "contains": [
+        "prompt_utf8_bytes",
+        "prompt_token_ids",
+        "generated_token_ids",
+        "first_token_top_5_logprobs",
+        "per_position_top_5_logprobs_for_short_router_seed"
+      ]
+    }
+  },
+  "capture_plan": {
+    "latest_resolution": {
+      "path": "output/r0-denominator-oracle-boundary-resolution-20260626T070933Z",
+      "tool": "tools/intel-qwen36-r0-denominator-oracle-boundary-resolution.py",
+      "schema_version": "intel-qwen36-r0-denominator-oracle-boundary-resolution-v0",
+      "required_checks_passed": true,
+      "denominator_interpretation": "openvino_262144_resource_failure_not_metric",
+      "llama_denominator_interpretation": "llama_vulkan_262144_timeout_no_metric_cleanup_complete",
+      "boundary_count": 17,
+      "r0_oracle_gate_closed": false
+    },
+    "latest_denominator_unavailable_policy": {
+      "path": "output/r0-denominator-unavailable-policy-20260626T071453Z",
+      "tool": "tools/intel-qwen36-r0-denominator-unavailable-policy.py",
+      "schema_version": "intel-qwen36-r0-denominator-unavailable-policy-v0",
+      "policy_id": "r0_262144_denominator_lane_unavailable",
+      "denominator_policy_gate_closed": true,
+      "denominator_metric_available": false,
+      "speedup_claims_allowed": false
+    },
+    "latest_oracle_capture_spec": {
+      "path": "output/r0-oracle-capture-spec-20260626T072158Z",
+      "tool": "tools/intel-qwen36-r0-oracle-capture-spec.py",
+      "schema_version": "intel-qwen36-r0-oracle-capture-spec-v0",
+      "boundary_type_count": 17,
+      "per_layer_boundary_record_count": 520,
+      "prompt_row_count": 26,
+      "required_checks_passed": true,
+      "r0_oracle_gate_closed": false
+    },
+    "latest_oracle_runtime_preflight": {
+      "path": "output/r0-oracle-runtime-preflight-20260626T074739Z",
+      "tool": "tools/intel-qwen36-r0-oracle-runtime-preflight.py",
+      "schema_version": "intel-qwen36-r0-oracle-runtime-preflight-v0",
+      "teacher_forced_distribution_route_status": "candidate_prior_llama_oracle_tool_completion_probabilities_route",
+      "tokenization_route_status": "candidate_llama_tokenize_route",
+      "per_boundary_tensor_route_status": "missing_stock_boundary_tensor_capture_route",
+      "required_checks_passed": true,
+      "r0_oracle_gate_closed": false
+    },
+    "latest_boundary_capture_route_preflight": {
+      "path": "output/r0-boundary-capture-route-preflight-20260627T044738Z",
+      "tool": "tools/intel-qwen36-r0-boundary-capture-route-preflight.py",
+      "schema_version": "intel-qwen36-r0-boundary-capture-route-preflight-v0",
+      "boundary_input_task_count": 524,
+      "boundary_output_task_count": 524,
+      "boundary_type_count": 17,
+      "selected_next_route": "stage_exact_llama_cpp_source_commit_and_build_with_intel_env",
+      "route_status": "missing_instrumentable_llama_cpp_source_tree_on_target",
+      "llama_runtime_build": 9518,
+      "llama_runtime_commit_short": "7c158fbb4",
+      "llama_install_binary_only": true,
+      "llama_source_tree_present": false,
+      "intel_env_build_tools_present": true,
+      "current_environment_can_capture_boundary_bundle_now": false,
+      "required_checks_passed": true,
+      "r0_oracle_gate_closed": false
+    },
+    "latest_llama_source_build_route": {
+      "path": "output/r0-llama-source-build-route-20260627T045059Z",
+      "tool": "tools/intel-qwen36-r0-llama-source-build-route.py",
+      "schema_version": "intel-qwen36-r0-llama-source-build-route-v0",
+      "target_llama_build": 9518,
+      "target_llama_commit_short": "7c158fbb4",
+      "upstream_commit_sha": "7c158fbb4aec1bdc9c81d6ca0e785139f4826fae",
+      "upstream_commit_resolved": true,
+      "target_source_stage_attempted": true,
+      "target_source_stage_dir": "/home/intel/intel-qwen36-r0/source/llama.cpp-7c158fbb4aec1bdc9c81d6ca0e785139f4826fae",
+      "source_ready_for_instrumentation": true,
+      "instrumentation_route_status": "source_staged_ready_for_instrumentation",
+      "required_checks_passed": true,
+      "r0_oracle_gate_closed": false
+    },
+    "latest_llama_instrumentation_map": {
+      "path": "output/r0-llama-instrumentation-map-20260627T050332Z",
+      "tool": "tools/intel-qwen36-r0-llama-instrumentation-map.py",
+      "schema_version": "intel-qwen36-r0-llama-instrumentation-map-v0",
+      "target_source_stage_dir": "/home/intel/intel-qwen36-r0/source/llama.cpp-7c158fbb4aec1bdc9c81d6ca0e785139f4826fae",
+      "source_rev_parse": "7c158fbb4aec1bdc9c81d6ca0e785139f4826fae",
+      "source_status_short_count": 0,
+      "required_boundary_type_count": 17,
+      "mapped_boundary_type_count": 17,
+      "route_status": "source_mapped_ready_for_instrumentation_patch",
+      "required_checks_passed": true,
+      "r0_oracle_gate_closed": false
+    },
+    "latest_boundary_capture_instrumentation_patch": {
+      "path": "output/r0-boundary-capture-instrumentation-patch-20260627T051514Z",
+      "tool": "tools/intel-qwen36-r0-boundary-capture-instrumentation-patch.py",
+      "schema_version": "intel-qwen36-r0-boundary-capture-instrumentation-patch-v0",
+      "target_source_stage_dir": "/home/intel/intel-qwen36-r0/source/llama.cpp-7c158fbb4aec1bdc9c81d6ca0e785139f4826fae",
+      "source_rev_parse": "7c158fbb4aec1bdc9c81d6ca0e785139f4826fae",
+      "source_status_short_count_after_patch": 2,
+      "route_status": "target_source_patched_ready_for_build",
+      "capture_tool_registered": true,
+      "capture_tool_present": true,
+      "required_checks_passed": true,
+      "r0_oracle_gate_closed": false
+    },
+    "latest_boundary_capture_build": {
+      "path": "output/r0-boundary-capture-build-20260627T051710Z",
+      "tool": "tools/intel-qwen36-r0-boundary-capture-build.py",
+      "schema_version": "intel-qwen36-r0-boundary-capture-build-v0",
+      "target": "llama-qwen36-boundary-capture",
+      "remote_build_dir": "/home/intel/intel-qwen36-r0/build/llama-qwen36-boundary-capture-20260627T051710Z",
+      "executable_path": "/home/intel/intel-qwen36-r0/build/llama-qwen36-boundary-capture-20260627T051710Z/bin/llama-qwen36-boundary-capture",
+      "configure_returncode": 0,
+      "build_returncode": 0,
+      "help_returncode": 0,
+      "executable_present": true,
+      "route_status": "boundary_capture_executable_built",
+      "required_checks_passed": true,
+      "r0_oracle_gate_closed": false
+    },
+    "latest_boundary_capture_run": {
+      "path": "output/r0-boundary-capture-run-20260627T054024Z",
+      "tool": "tools/intel-qwen36-r0-boundary-capture-run.py",
+      "schema_version": "intel-qwen36-r0-boundary-capture-run-v0",
+      "case_id": "short_math_001",
+      "source_token_position": 15,
+      "prompt_token_count": 16,
+      "captured_tensor_count": 1493,
+      "tensor_jsonl_row_count": 1493,
+      "payload_file_count": 1493,
+      "payload_bytes_total": 83628864,
+      "unique_tensor_name_count": 1473,
+      "logits_present": true,
+      "extra_filter_count": 16,
+      "route_status": "boundary_capture_run_succeeded",
+      "required_checks_passed": true,
+      "full_oracle_bundle": false,
+      "r0_oracle_gate_closed": false
+    },
+    "latest_boundary_capture_coverage": {
+      "path": "output/r0-boundary-capture-coverage-20260627T054428Z",
+      "tool": "tools/intel-qwen36-r0-boundary-capture-coverage.py",
+      "schema_version": "intel-qwen36-r0-boundary-capture-coverage-v0",
+      "input_task_count": 524,
+      "output_task_count": 524,
+      "input_direct_or_derived_match_count": 434,
+      "output_direct_or_derived_match_count": 394,
+      "input_all_cues_matched_count": 133,
+      "output_all_cues_matched_count": 381,
+      "input_effective_policy_match_count": 524,
+      "output_effective_policy_match_count": 524,
+      "policy_not_applicable_count": 60,
+      "policy_equivalent_count": 150,
+      "policy_derived_count": 40,
+      "route_status": "raw_boundary_capture_effectively_covers_queue_with_hybrid_policy",
+      "raw_capture_ready_for_bundle_mapping": true,
+      "requires_hybrid_policy_for_bundle_mapping": true,
+      "required_checks_passed": true,
+      "r0_oracle_gate_closed": false
+    },
+    "latest_boundary_bundle_fragment": {
+      "path": "output/r0-boundary-bundle-fragment-20260627T054948Z",
+      "tool": "tools/intel-qwen36-r0-boundary-bundle-fragment-assemble.py",
+      "schema_version": "intel-qwen36-r0-boundary-bundle-fragment-v0",
+      "input_rows": 524,
+      "output_rows": 524,
+      "policy_not_applicable_rows": 60,
+      "derived_output_rows": 40,
+      "captured_inline_rows": 1,
+      "sampler_rows": 1,
+      "route_status": "boundary_reference_fragment_assembled",
+      "full_oracle_bundle": false,
+      "required_checks_passed": true,
+      "r0_oracle_gate_closed": false
+    },
+    "latest_distribution_capture_smoke": {
+      "path": "output/r0-distribution-capture-smoke-20260626T075730Z",
+      "tool": "tools/intel-qwen36-r0-distribution-capture-smoke.py",
+      "schema_version": "intel-qwen36-r0-distribution-capture-smoke-v0",
+      "case_id": "short_math_001",
+      "generated_token_count": 1,
+      "request_status": 200,
+      "top_logprobs_present": true,
+      "required_checks_passed": true,
+      "full_acceptance_bundle": false,
+      "r0_oracle_gate_closed": false
+    },
+    "latest_short_router_distribution_capture": {
+      "path": "output/r0-distribution-capture-short-router-20260626T080938Z",
+      "tool": "tools/intel-qwen36-r0-distribution-capture-short-router.py",
+      "schema_version": "intel-qwen36-r0-distribution-capture-short-router-v0",
+      "captured_case_count": 6,
+      "selected_case_count": 6,
+      "total_distribution_positions": 429,
+      "stopped_before_request_count": 2,
+      "required_checks_passed": true,
+      "full_acceptance_bundle": false,
+      "r0_oracle_gate_closed": false
+    },
+    "latest_materialized_distribution_capture": {
+      "path": "output/r0-distribution-capture-materialized-20260626T150939Z",
+      "tool": "tools/intel-qwen36-r0-distribution-capture-materialized.py",
+      "schema_version": "intel-qwen36-r0-distribution-capture-materialized-v0",
+      "captured_case_count": 2,
+      "cases": [
+        "sentinel_001k",
+        "prefill_shape_001k"
+      ],
+      "requested_output_token_count": 512,
+      "total_distribution_positions": 541,
+      "stopped_before_request_count": 1,
+      "required_checks_passed": true,
+      "full_acceptance_bundle": false,
+      "r0_oracle_gate_closed": false
+    },
+    "latest_materialized_distribution_capture_extension": {
+      "path": "output/r0-distribution-capture-materialized-20260626T151536Z",
+      "tool": "tools/intel-qwen36-r0-distribution-capture-materialized.py",
+      "schema_version": "intel-qwen36-r0-distribution-capture-materialized-v0",
+      "captured_case_count": 4,
+      "cases": [
+        "sentinel_002k",
+        "prefill_shape_002k",
+        "sentinel_004k",
+        "prefill_shape_004k"
+      ],
+      "requested_output_token_count": 512,
+      "total_distribution_positions": 2048,
+      "stopped_before_request_count": 0,
+      "required_checks_passed": true,
+      "full_acceptance_bundle": false,
+      "r0_oracle_gate_closed": false
+    },
+    "latest_materialized_distribution_capture_extension_8k16k": {
+      "path": "output/r0-distribution-capture-materialized-20260626T152722Z",
+      "tool": "tools/intel-qwen36-r0-distribution-capture-materialized.py",
+      "schema_version": "intel-qwen36-r0-distribution-capture-materialized-v0",
+      "captured_case_count": 4,
+      "cases": [
+        "sentinel_008k",
+        "prefill_shape_008k",
+        "sentinel_016k",
+        "prefill_shape_016k"
+      ],
+      "requested_output_token_count": 512,
+      "total_distribution_positions": 1956,
+      "stopped_before_request_count": 1,
+      "required_checks_passed": true,
+      "full_acceptance_bundle": false,
+      "r0_oracle_gate_closed": false
+    },
+    "latest_materialized_distribution_capture_extension_32k64k": {
+      "path": "output/r0-distribution-capture-materialized-20260626T154746Z",
+      "tool": "tools/intel-qwen36-r0-distribution-capture-materialized.py",
+      "schema_version": "intel-qwen36-r0-distribution-capture-materialized-v0",
+      "captured_case_count": 4,
+      "cases": [
+        "sentinel_032k",
+        "prefill_shape_032k",
+        "sentinel_064k",
+        "prefill_shape_064k"
+      ],
+      "requested_output_token_count": 512,
+      "total_distribution_positions": 1551,
+      "stopped_before_request_count": 1,
+      "required_checks_passed": true,
+      "full_acceptance_bundle": false,
+      "r0_oracle_gate_closed": false
+    },
+    "latest_materialized_distribution_capture_extension_100k": {
+      "path": "output/r0-distribution-capture-materialized-20260626T165847Z",
+      "tool": "tools/intel-qwen36-r0-distribution-capture-materialized.py",
+      "schema_version": "intel-qwen36-r0-distribution-capture-materialized-v0",
+      "captured_case_count": 2,
+      "cases": [
+        "sentinel_100k",
+        "prefill_shape_100k"
+      ],
+      "requested_output_token_count": 512,
+      "total_distribution_positions": 529,
+      "stopped_before_request_count": 1,
+      "required_checks_passed": true,
+      "full_acceptance_bundle": false,
+      "r0_oracle_gate_closed": false
+    },
+    "latest_materialized_distribution_capture_extension_128k": {
+      "path": "output/r0-distribution-capture-materialized-20260626T184541Z",
+      "tool": "tools/intel-qwen36-r0-distribution-capture-materialized.py",
+      "schema_version": "intel-qwen36-r0-distribution-capture-materialized-v0",
+      "captured_case_count": 2,
+      "cases": [
+        "sentinel_128k",
+        "prefill_shape_128k"
+      ],
+      "requested_output_token_count": 512,
+      "total_distribution_positions": 529,
+      "stopped_before_request_count": 1,
+      "required_checks_passed": true,
+      "full_acceptance_bundle": false,
+      "r0_oracle_gate_closed": false
+    },
+    "materialized_distribution_capture_coverage": {
+      "artifact_count": 6,
+      "paths": [
+        "output/r0-distribution-capture-materialized-20260626T150939Z",
+        "output/r0-distribution-capture-materialized-20260626T151536Z",
+        "output/r0-distribution-capture-materialized-20260626T152722Z",
+        "output/r0-distribution-capture-materialized-20260626T154746Z",
+        "output/r0-distribution-capture-materialized-20260626T165847Z",
+        "output/r0-distribution-capture-materialized-20260626T184541Z"
+      ],
+      "captured_case_count": 18,
+      "cases": [
+        "sentinel_001k",
+        "prefill_shape_001k",
+        "sentinel_002k",
+        "prefill_shape_002k",
+        "sentinel_004k",
+        "prefill_shape_004k",
+        "sentinel_008k",
+        "prefill_shape_008k",
+        "sentinel_016k",
+        "prefill_shape_016k",
+        "sentinel_032k",
+        "prefill_shape_032k",
+        "sentinel_064k",
+        "prefill_shape_064k",
+        "sentinel_100k",
+        "prefill_shape_100k",
+        "sentinel_128k",
+        "prefill_shape_128k"
+      ],
+      "requested_output_token_count": 512,
+      "total_distribution_positions": 7154,
+      "stopped_before_request_count": 5,
+      "full_acceptance_bundle": false,
+      "r0_oracle_gate_closed": false
+    },
+    "latest_materialized_distribution_capture_1024_1k4k": {
+      "path": "output/r0-distribution-capture-materialized-20260626T213023Z",
+      "tool": "tools/intel-qwen36-r0-distribution-capture-materialized.py",
+      "schema_version": "intel-qwen36-r0-distribution-capture-materialized-v0",
+      "captured_case_count": 6,
+      "cases": [
+        "sentinel_001k",
+        "prefill_shape_001k",
+        "sentinel_002k",
+        "prefill_shape_002k",
+        "sentinel_004k",
+        "prefill_shape_004k"
+      ],
+      "requested_output_token_count": 1024,
+      "total_distribution_positions": 4262,
+      "stopped_before_request_count": 4,
+      "required_checks_passed": true,
+      "full_acceptance_bundle": false,
+      "r0_oracle_gate_closed": false
+    },
+    "latest_materialized_distribution_capture_1024_8k16k": {
+      "path": "output/r0-distribution-capture-materialized-20260626T215314Z",
+      "tool": "tools/intel-qwen36-r0-distribution-capture-materialized.py",
+      "schema_version": "intel-qwen36-r0-distribution-capture-materialized-v0",
+      "captured_case_count": 4,
+      "cases": [
+        "sentinel_008k",
+        "prefill_shape_008k",
+        "sentinel_016k",
+        "prefill_shape_016k"
+      ],
+      "requested_output_token_count": 1024,
+      "total_distribution_positions": 3000,
+      "stopped_before_request_count": 3,
+      "required_checks_passed": true,
+      "full_acceptance_bundle": false,
+      "r0_oracle_gate_closed": false
+    },
+    "latest_materialized_distribution_capture_1024_32k64k": {
+      "path": "output/r0-distribution-capture-materialized-20260626T221606Z",
+      "tool": "tools/intel-qwen36-r0-distribution-capture-materialized.py",
+      "schema_version": "intel-qwen36-r0-distribution-capture-materialized-v0",
+      "captured_case_count": 4,
+      "cases": [
+        "sentinel_032k",
+        "prefill_shape_032k",
+        "sentinel_064k",
+        "prefill_shape_064k"
+      ],
+      "requested_output_token_count": 1024,
+      "total_distribution_positions": 2971,
+      "stopped_before_request_count": 2,
+      "required_checks_passed": true,
+      "full_acceptance_bundle": false,
+      "r0_oracle_gate_closed": false
+    },
+    "latest_materialized_distribution_capture_1024_100k": {
+      "path": "output/r0-distribution-capture-materialized-20260626T234204Z",
+      "tool": "tools/intel-qwen36-r0-distribution-capture-materialized.py",
+      "schema_version": "intel-qwen36-r0-distribution-capture-materialized-v0",
+      "captured_case_count": 2,
+      "cases": [
+        "sentinel_100k",
+        "prefill_shape_100k"
+      ],
+      "requested_output_token_count": 1024,
+      "total_distribution_positions": 1041,
+      "stopped_before_request_count": 1,
+      "required_checks_passed": true,
+      "full_acceptance_bundle": false,
+      "r0_oracle_gate_closed": false
+    },
+    "latest_materialized_distribution_capture_1024_128k": {
+      "path": "output/r0-distribution-capture-materialized-20260627T013743Z",
+      "tool": "tools/intel-qwen36-r0-distribution-capture-materialized.py",
+      "schema_version": "intel-qwen36-r0-distribution-capture-materialized-v0",
+      "captured_case_count": 2,
+      "cases": [
+        "sentinel_128k",
+        "prefill_shape_128k"
+      ],
+      "requested_output_token_count": 1024,
+      "total_distribution_positions": 1041,
+      "stopped_before_request_count": 1,
+      "required_checks_passed": true,
+      "full_acceptance_bundle": false,
+      "r0_oracle_gate_closed": false
+    },
+    "materialized_distribution_capture_1024_coverage": {
+      "artifact_count": 5,
+      "paths": [
+        "output/r0-distribution-capture-materialized-20260626T213023Z",
+        "output/r0-distribution-capture-materialized-20260626T215314Z",
+        "output/r0-distribution-capture-materialized-20260626T221606Z",
+        "output/r0-distribution-capture-materialized-20260626T234204Z",
+        "output/r0-distribution-capture-materialized-20260627T013743Z"
+      ],
+      "captured_case_count": 18,
+      "cases": [
+        "sentinel_001k",
+        "prefill_shape_001k",
+        "sentinel_002k",
+        "prefill_shape_002k",
+        "sentinel_004k",
+        "prefill_shape_004k",
+        "sentinel_008k",
+        "prefill_shape_008k",
+        "sentinel_016k",
+        "prefill_shape_016k",
+        "sentinel_032k",
+        "prefill_shape_032k",
+        "sentinel_064k",
+        "prefill_shape_064k",
+        "sentinel_100k",
+        "prefill_shape_100k",
+        "sentinel_128k",
+        "prefill_shape_128k"
+      ],
+      "requested_output_token_count": 1024,
+      "total_distribution_positions": 12315,
+      "stopped_before_request_count": 11,
+      "full_acceptance_bundle": false,
+      "r0_oracle_gate_closed": false
+    },
+    "latest_oracle_capture_queue": {
+      "path": "output/r0-oracle-capture-queue-20260626T074119Z",
+      "tool": "tools/intel-qwen36-r0-oracle-capture-queue.py",
+      "schema_version": "intel-qwen36-r0-oracle-capture-queue-v0",
+      "token_topk_task_count": 26,
+      "teacher_forced_distribution_task_count": 26,
+      "boundary_input_task_count": 524,
+      "boundary_output_task_count": 524,
+      "total_bundle_jsonl_rows": 1100,
+      "required_checks_passed": true,
+      "r0_oracle_gate_closed": false
+    },
+    "latest_oracle_prompt_materialization": {
+      "path": "output/r0-oracle-prompt-materialization-20260626T082201Z",
+      "tool": "tools/intel-qwen36-r0-oracle-prompt-materialize.py",
+      "schema_version": "intel-qwen36-r0-oracle-prompt-materialization-v0",
+      "prompt_row_count": 26,
+      "generated_prompt_row_count": 20,
+      "exact_generated_prompt_row_count": 20,
+      "max_target_prompt_tokens": 262144,
+      "required_checks_passed": true,
+      "full_oracle_bundle": false,
+      "r0_oracle_gate_closed": false
+    },
+    "latest_oracle_token_id_capture": {
+      "path": "output/r0-oracle-token-id-capture-20260626T083347Z",
+      "tool": "tools/intel-qwen36-r0-oracle-token-id-capture.py",
+      "schema_version": "intel-qwen36-r0-oracle-token-id-capture-v0",
+      "captured_row_count": 26,
+      "total_prompt_tokens": 1251478,
+      "max_prompt_tokens": 262144,
+      "top_k_logprobs_available": false,
+      "required_checks_passed": true,
+      "full_oracle_bundle": false,
+      "r0_oracle_gate_closed": false
+    },
+    "latest_oracle_topk_smoke": {
+      "path": "output/r0-oracle-topk-smoke-20260626T121946Z",
+      "tool": "tools/intel-qwen36-r0-oracle-topk-smoke.py",
+      "schema_version": "intel-qwen36-r0-oracle-topk-smoke-v0",
+      "captured_row_count": 2,
+      "cases": [
+        "sentinel_128k",
+        "prefill_shape_128k"
+      ],
+      "top_logprobs_per_row": 5,
+      "required_checks_passed": true,
+      "full_ladder_topk": false,
+      "full_oracle_bundle": false,
+      "r0_oracle_gate_closed": false
+    },
+    "latest_oracle_topk_256k_exact_context_attempt": {
+      "path": "output/r0-oracle-topk-smoke-20260626T144950Z",
+      "tool": "tools/intel-qwen36-r0-oracle-topk-smoke.py",
+      "schema_version": "intel-qwen36-r0-oracle-topk-smoke-v0",
+      "captured_row_count": 2,
+      "cases": [
+        "sentinel_256k",
+        "prefill_shape_256k"
+      ],
+      "prompt_tokens_per_row": 262144,
+      "ctx_size": 262144,
+      "request_status": 400,
+      "failure_type": "exceed_context_size_error",
+      "failure_message": "request (262144 tokens) exceeds the available context size (262144 tokens), try increasing it",
+      "required_checks_passed": false,
+      "full_ladder_topk": false,
+      "full_oracle_bundle": false,
+      "r0_oracle_gate_closed": false
+    },
+    "latest_oracle_256k_prompt_edge_policy": {
+      "path": "output/r0-oracle-256k-prompt-edge-policy-20260626T145727Z",
+      "tool": "tools/intel-qwen36-r0-oracle-256k-prompt-edge-policy.py",
+      "schema_version": "intel-qwen36-r0-oracle-256k-prompt-edge-policy-v0",
+      "policy_id": "r0_256k_exact_prompt_first_token_topk_edge",
+      "decision": "accept_exact_262144_prompt_first_token_topk_as_context_edge_for_r0",
+      "exact_prompt_token_count": 262144,
+      "context_safe_max_prompt_tokens_for_first_token_prediction": 262143,
+      "prompt_edge_policy_gate_closed": true,
+      "topk_logprobs_available": false,
+      "required_checks_passed": true,
+      "full_oracle_bundle": false,
+      "r0_oracle_gate_closed": false
+    },
+    "latest_resident_harness_gate_audit": {
+      "path": "output/r0-resident-harness-gate-audit-20260627T061917Z",
+      "tool": "tools/intel-qwen36-r0-resident-harness-gate-audit.py",
+      "schema_version": "intel-qwen36-r0-resident-harness-gate-audit-v0",
+      "candidate_real_bundle_count": 1,
+      "required_bundle_path_count": 6,
+      "r0_oracle_gate_closed": true,
+      "resident_harness_load_artifact": "output/r0-resident-harness-load-20260627T061911Z/load.json",
+      "resident_harness_load_executed": true,
+      "r0_resident_harness_gate_closed": true,
+      "required_checks_passed": true
+    },
+    "latest_oracle_bundle_validation": {
+      "path": "output/r0-oracle-bundle-validation-20260627T060238Z",
+      "tool": "tools/intel-qwen36-r0-oracle-bundle-validate.py",
+      "schema_version": "intel-qwen36-r0-oracle-bundle-validation-v0",
+      "candidate_bundle_count": 1,
+      "candidate_valid_bundle_count": 1,
+      "expected_boundary_record_count": 524,
+      "expected_prompt_row_count": 26,
+      "prompt_edge_policy_required": true,
+      "prompt_edge_case_ids": [
+        "prefill_shape_256k",
+        "sentinel_256k"
+      ],
+      "oracle_contract_gate_closed": true,
+      "required_checks_passed": true,
+      "r0_oracle_gate_closed": true
+    },
+    "next_required_outputs": [],
+    "promotion_rule": "R0 setup gates are closed for target facts, oracle bundle validation, route feasibility, and current resident harness load; no speedup claim is allowed without later correctness and benchmark artifacts.",
+    "latest_oracle_bundle": {
+      "path": "oracle/r0-oracle-bundle-20260627T060028Z",
+      "tool": "tools/intel-qwen36-r0-oracle-bundle-assemble.py",
+      "schema_version": "intel-qwen36-r0-oracle-full-bundle-v0",
+      "assembled_at": "2026-06-27T06:00:28Z",
+      "token_topk_rows": 26,
+      "teacher_forced_distribution_rows": 26,
+      "teacher_forced_distribution_positions": 12744,
+      "boundary_input_rows": 524,
+      "boundary_output_rows": 524,
+      "prompt_edge_rows": 2,
+      "full_acceptance_bundle": true,
+      "required_checks_passed": true,
+      "r0_oracle_gate_closed": true
+    },
+    "latest_resident_harness_load": {
+      "path": "output/r0-resident-harness-load-20260627T061911Z",
+      "tool": "tools/intel-qwen36-r0-resident-harness-load.py",
+      "schema_version": "intel-qwen36-r0-resident-harness-load-v0",
+      "executable": "build/engine/iq36-load-bundle",
+      "oracle_bundle": "oracle/r0-oracle-bundle-20260627T060028Z",
+      "returncode": 0,
+      "resident_harness_loaded": true,
+      "token_topk_rows": 26,
+      "teacher_forced_distribution_rows": 26,
+      "boundary_input_rows": 524,
+      "boundary_output_rows": 524,
+      "required_checks_passed": true,
+      "r0_resident_harness_gate_closed": true,
+      "speedup_claims_allowed": false
+    }
+  },
+  "missing_for_r0_close": [],
+  "r0_oracle_gate_closed": true
+}
