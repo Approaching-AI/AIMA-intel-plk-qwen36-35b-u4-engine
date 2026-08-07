@@ -1,7 +1,7 @@
 # Current Frontier - Tier-3 pointer
 
 > Workstream: `intel-qwen36-35b-a3b-gguf-q4km`
-> Snapshot: 2026-08-06
+> Snapshot: 2026-08-07
 
 Read this pointer, then `STATUS.md`. This is not a run log.
 
@@ -39,8 +39,10 @@ Read this pointer, then `STATUS.md`. This is not a run log.
   now have bit-identical standalone source rebuilds, and the irrecoverable
   locked-IR conversion history has an explicit external-artifact boundary.
   The repository owner selected Apache-2.0 and the external exact-hash model
-  prerequisite. `STATUS.md` owns the remaining personal/organization GitHub
-  repository and accepted plugin/Python-runtime publication action.
+  prerequisite. The personal public repository, exact `Approaching-AI` fork,
+  synchronized `main`, and annotated `v0.1.0` tag are externally verified.
+  `STATUS.md` owns the remaining canonical GitHub Release upload and external
+  checksum verification action.
 
 ## Next action
 
