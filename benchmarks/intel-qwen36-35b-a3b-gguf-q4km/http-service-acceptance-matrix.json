@@ -1,10 +1,14 @@
 {
   "contract_version": "0.4",
-  "evaluated_at": "2026-08-06",
+  "evaluated_at": "2026-08-09",
   "service_contract": "contracts/qwen36-openai-http-service-contract.json",
   "release_status": {
     "bound_target_technical_candidate": "pass",
-    "public_open_source_release": "publication_in_progress"
+    "public_open_source_release": "pass",
+    "canonical_release": "https://github.com/Approaching-AI/AIMA-intel-plk-qwen36-35b-u4-engine/releases/tag/v0.1.0",
+    "source_tag_commit": "f4707fd1af6a87390fc29c104acd5ce6a145c261",
+    "anonymous_download_sha256_verification": "pass",
+    "uploaded_asset_count": 6
   },
   "release_gate": {
     "unit_tests": {
@@ -166,8 +170,11 @@
       "model_redistribution_authorized": false,
       "exact_short_plugin_source_recipe_available": true,
       "exact_long_plugin_source_recipe_available": true,
-      "exact_long_plugin_binary_published": false,
-      "exact_python_runtime_binaries_published": false
+      "exact_long_plugin_binary_published": true,
+      "exact_python_runtime_binaries_published": true,
+      "canonical_release_published": true,
+      "external_release_checksum_verification": true,
+      "remaining": []
     }
   },
   "performance_lanes": {

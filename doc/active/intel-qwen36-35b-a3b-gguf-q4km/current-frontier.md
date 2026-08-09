@@ -1,7 +1,7 @@
 # Current Frontier - Tier-3 pointer
 
 > Workstream: `intel-qwen36-35b-a3b-gguf-q4km`
-> Snapshot: 2026-08-07
+> Snapshot: 2026-08-09
 
 Read this pointer, then `STATUS.md`. This is not a run log.
 
@@ -10,8 +10,9 @@ Read this pointer, then `STATUS.md`. This is not a run log.
 - Open gate and next action: `STATUS.md`.
 - Machine counters and kill-number: `frontier.json`.
 - Route decisions: `routes-ledger.json` plus accepted/rejected ledgers.
-- Evidence: `meta-log/2026-08-05.md` for seq2300 and
-  `meta-log/2026-08-06.md` for the resident HTTP release layer.
+- Evidence: `meta-log/2026-08-05.md` for seq2300,
+  `meta-log/2026-08-06.md` for the resident HTTP release layer, and
+  `meta-log/2026-08-09.md` for public Release closure.
 - Thresholds: `benchmarks/intel-qwen36-35b-a3b-gguf-q4km/acceptance-matrix.json`.
 
 ## Current state
@@ -40,15 +41,16 @@ Read this pointer, then `STATUS.md`. This is not a run log.
   locked-IR conversion history has an explicit external-artifact boundary.
   The repository owner selected Apache-2.0 and the external exact-hash model
   prerequisite. The personal public repository, exact `Approaching-AI` fork,
-  synchronized `main`, and annotated `v0.1.0` tag are externally verified.
-  `STATUS.md` owns the remaining canonical GitHub Release upload and external
-  checksum verification action.
+  synchronized source, annotated `v0.1.0` tag, canonical GitHub Release, and
+  unauthenticated external asset downloads are verified. The downloaded
+  payloads and manifest pass the published `SHA256SUMS`; no `v0.1.0`
+  publication gate remains.
 
 ## Next action
 
 Freeze the promoted carrier and its exact fingerprints. Further optimization
 is optional successor work, not an open acceptance gap: admit only a new,
 independently fingerprinted, profile-backed kernel route and require the same
-complete product gate before it can replace seq2300. For the current HTTP
-publication action, follow `STATUS.md` rather than launching another engine
-probe.
+complete product gate before it can replace seq2300. `v0.1.0` is frozen; a
+successor release must repeat the source, runtime, correctness, security, and
+external-download gates.

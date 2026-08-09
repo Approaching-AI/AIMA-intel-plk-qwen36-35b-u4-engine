@@ -69,7 +69,8 @@ The model is a separately supplied, hash-locked input; its recoverable history
 and explicit public-release boundary are documented in
 [`doc/reference/intel-qwen36-35b-a3b-gguf-q4km/locked-model-provenance-boundary.md`](doc/reference/intel-qwen36-35b-a3b-gguf-q4km/locked-model-provenance-boundary.md).
 
-The `v0.1.0` GitHub release supplies the Apache-2.0 service wheel, exact
+The [`v0.1.0` GitHub release](https://github.com/Approaching-AI/AIMA-intel-plk-qwen36-35b-u4-engine/releases/tag/v0.1.0)
+supplies the Apache-2.0 service wheel, exact
 CPython 3.12 offline wheelhouse, native x86_64 runtime/plugins with source
 recipes and third-party notices, and an evidence bundle. Verify every download
 against the release `SHA256SUMS` before installation. Model weights are not a

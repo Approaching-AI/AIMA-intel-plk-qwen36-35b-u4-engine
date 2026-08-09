@@ -26,3 +26,13 @@ evidence and exact external runtime/model prerequisites.
 
 The public `meta-agent` submodule is retained for contributor workflow only.
 The engine and HTTP service do not import or link it.
+
+## Published release
+
+The canonical Apache-2.0 `v0.1.0` release is published at
+<https://github.com/Approaching-AI/AIMA-intel-plk-qwen36-35b-u4-engine/releases/tag/v0.1.0>.
+It binds annotated source tag commit
+`f4707fd1af6a87390fc29c104acd5ce6a145c261` to the native runtime, offline
+CPython 3.12 wheelhouse, service wheel, evidence archive, release manifest, and
+top-level checksums. All six assets were downloaded again through anonymous
+public URLs and passed the published `SHA256SUMS`.

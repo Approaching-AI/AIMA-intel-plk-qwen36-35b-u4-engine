@@ -135,9 +135,10 @@ before readiness. The machine-readable selection is in
 
 The repository license is Apache-2.0 and the public source-repository model
 policy is the external exact-hash prerequisite. Neither grants model
-redistribution rights. The remaining publication work is mechanical: publish
-the source commit and the exact runtime assets described below, then verify the
-public repository and release checksums.
+redistribution rights. For `v0.1.0`, source commit
+`f4707fd1af6a87390fc29c104acd5ce6a145c261` and the exact runtime assets below
+are published in the canonical `Approaching-AI` GitHub Release. Anonymous
+re-download of all six assets passes the published `SHA256SUMS`.
 
 The accepted plugin and exact OpenVINO Python binaries are also not tracked.
 The repository provides
@@ -162,8 +163,9 @@ verification, source provenance, service tests, and the release scan. The
 complete real-service and OpenAI SDK smokes pass. These create deployable
 local/native bundles without model bytes.
 
-Both plugin source recipes are now standalone and bit-identical. For a public
-release, the owner must still publish the accepted plugin and exact Python
-runtime binaries with the generated notices/manifests (or independently
-reconstruct and fully revalidate equivalent source builds). The repository
-license and source-repository model policy are already selected.
+Both plugin source recipes are standalone and bit-identical. The `v0.1.0`
+Release publishes the accepted plugins and exact Python runtime binaries with
+the generated notices and manifests. Any successor must publish the same
+classes of artifacts, or independently reconstruct and fully revalidate
+equivalent source builds, under the selected repository license and model
+policy.
