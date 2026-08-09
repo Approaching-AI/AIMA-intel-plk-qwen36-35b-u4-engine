@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Added a first-class performance and correctness report with all 21 paired
+  benchmark cases, per-case teacher-forced KLD and top-1 results, exact-token
+  counts, context smoothness, jitter, memory, service validation, explicit
+  non-claims, and checksum-bound raw-evidence instructions.
+
 ## 0.1.0 - 2026-08-06
 
 - Added a resident batch-size-1 HTTP/1.1 inference service with OpenAI-shaped

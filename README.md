@@ -28,6 +28,31 @@ bottlenecks. It is intentionally not a generic serving runtime.
   reach at least `1.10x` untouched same-host stock OpenVINO GPU in both prefill
   and decode for every accepted bucket; see the goal and acceptance matrix
 
+## Published v0.1.0 Results
+
+The promoted cold/no-prefix matrix passes all `21/21` cases at output 512. It
+produces the exact same `10,752/10,752` greedy tokens as the locked stock
+OpenVINO GPU reference, with minimum teacher-forced top-1 agreement `1.0` and
+maximum KLD `0.004836565` against the `0.005` limit.
+
+| Prompt bucket | Candidate prefill tok/s | Candidate decode tok/s | Worst prefill LCB | Worst decode LCB | Gate |
+|---:|---:|---:|---:|---:|:---:|
+| 2k | 2105.22 | 51.66 | 1.479464x | 1.591514x | pass |
+| 4k | 2367.89 | 50.57 | 1.568074x | 1.617308x | pass |
+| 8k | 2462.30 | 47.96 | 1.654805x | 1.600109x | pass |
+| 16k | 2337.37 | 45.84 | 1.648845x | 1.676622x | pass |
+| 32k | 2065.28 | 38.84 | 1.608355x | 1.679497x | pass |
+| 64k | 1621.72 | 30.25 | 1.600691x | 1.767016x | pass |
+| 128k | 1098.78 | 21.01 | 1.813360x | 1.890407x | pass |
+
+Throughput is the candidate median across the three prompt classes in each
+bucket. Speedup is the worst paired candidate/stock one-sided 95% lower
+confidence bound (LCB) in that bucket, not a ratio of unpaired best runs.
+
+See [`BENCHMARKS.md`](BENCHMARKS.md) for the complete 21-case table,
+correctness eval, context smoothness, jitter, memory, methodology, limitations,
+and raw-evidence verification instructions.
+
 ## Local Experiment Setup
 
 The repository runs directly on the Intel experiment machine. Experiment
