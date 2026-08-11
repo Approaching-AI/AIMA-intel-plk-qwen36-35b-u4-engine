@@ -254,6 +254,13 @@
   "publication_decision": {
     "v0_1_0_formal_results": "remain historical exact-bucket results for the frozen v0.1.0 fingerprint and must not be represented as validation of the fixed plugin",
     "v0_1_1_targeted_result": "fixes the reproduced arbitrary-length service failure in all four affected buckets and passes the targeted correctness checks",
+    "public_source_commit": "af3753db721b40d28b30773468d4b0c10d1cb45a",
+    "public_source_repositories": [
+      "https://github.com/skyguan92/AIMA-intel-plk-qwen36-35b-u4-engine",
+      "https://github.com/Approaching-AI/AIMA-intel-plk-qwen36-35b-u4-engine"
+    ],
+    "v0_1_0_release_warning_published": true,
+    "v0_1_1_tag_or_release_published": false,
     "speedup_claims_for_v0_1_1": false,
     "release_ready": false,
     "remaining_gate": "repeat the complete 21-case output512 ABBA8 performance, correctness, smoothness, memory, source/runtime, security, packaging, and anonymous external-download gates for the successor fingerprint"

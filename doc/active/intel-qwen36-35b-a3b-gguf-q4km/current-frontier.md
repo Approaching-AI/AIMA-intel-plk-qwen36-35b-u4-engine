@@ -12,7 +12,7 @@ Read this pointer, then `STATUS.md`. This is not a run log.
 - Route decisions: `routes-ledger.json` plus accepted/rejected ledgers.
 - Evidence: `meta-log/2026-08-05.md` for seq2300,
   `meta-log/2026-08-06.md` for the resident HTTP release layer, and
-  `meta-log/2026-08-09.md` for public Release closure, and
+  `meta-log/2026-08-09.md` for public Release closure, plus
   `meta-log/2026-08-12.md` for the near-boundary incident and successor gate.
 - Thresholds: `benchmarks/intel-qwen36-35b-a3b-gguf-q4km/acceptance-matrix.json`.
 
@@ -59,6 +59,10 @@ Read this pointer, then `STATUS.md`. This is not a run log.
   full-vocabulary comparison with top-1 `1.0` and maximum KLD `0.000092598`,
   and a bit-identical source rebuild. These are maintenance checks, not a new
   formal performance promotion.
+- The candidate source and its performance/correctness disclosure are public
+  on both Apache-2.0 repositories at commit `af3753db721b...45a`; their `main`
+  heads match. The existing `v0.1.0` Release now carries a prominent warning.
+  No `v0.1.1` tag or Release exists while the successor gate is open.
 
 ## Next action
 
@@ -66,5 +70,5 @@ Keep `v0.1.0` and seq2300 frozen as historical exact-fingerprint evidence. Run
 the complete 21-case output512 ABBA8 performance/correctness/smoothness/memory
 gate for fixed long-plugin SHA-256 `c0515a401f57...121`. Only after that passes
 may the successor repeat runtime packaging, source reconstruction, security,
-public source/tag/Release upload, and anonymous external-download verification.
+annotated tag/Release upload, and anonymous external-download verification.
 Do not publish `v0.1.1` or transfer seq2300 speedup claims before those gates.

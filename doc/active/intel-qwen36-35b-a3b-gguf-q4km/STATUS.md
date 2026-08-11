@@ -26,6 +26,7 @@ runtime, canonical Release, and anonymous-download verification.
 | frozen release | `v0.1.0` remains published at source tag commit `f4707fd1af6a87390fc29c104acd5ce6a145c261`; its formal seq2300 results apply only to the released fingerprints |
 | known v0.1.0 defect | arbitrary long lengths can reach a preallocated physical/logical LM-head layout mismatch; released plugin `01c04ced...269` reproduces the exact failure at 16,380 tokens |
 | fixed carrier | long plugin `c0515a401f57...121`; source state `77153ecf9ed7...067`; three-file delta `017f5eb4925c...ed`; standalone rebuild is bit-identical |
+| public source | personal and canonical Apache-2.0 public `main` branches match at `af3753db721b40d28b30773468d4b0c10d1cb45a`; `v0.1.0` Release notes carry the known-issue warning; no `v0.1.1` tag or Release exists |
 | HTTP contract | Models, Completions, Chat Completions, and Responses create/retrieve/delete; JSON/SSE, function tools, structured outputs, byte/entry/TTL-bounded Responses state, bearer auth, bounded-cardinality metrics, request deadlines, graceful drain, and disconnect cancellation |
 | context contract | arbitrary caller lengths; smallest internal bucket; no padding/truncation; `prompt_tokens + requested_output_tokens <= max_context_length`; real HTTP checks at 33, 8207, and 131072 prompt tokens |
 | resident/cache gate | isolated profile/bucket worker processes; serial batch-1 execution; PID residency check passes; exact prefix-hit tokens match uncached output and bypass reports zero cached tokens |
@@ -33,7 +34,7 @@ runtime, canonical Release, and anonymous-download verification.
 | v0.1.1 targeted HTTP evidence | fast suite `67/67`; real smoke `18/18`, including JSON/SSE, all four reproduced near-boundary lengths with status 200, and exact 131,072-token maximum context |
 | v0.1.1 targeted performance | controlled single-run output64 rows at 16,380/32,758/65,519/131,037 tokens: TTFT `15.200/76.482/104.199/185.026 s`; inter-token decode `46.49/39.58/30.41/21.09 tok/s`; maintenance evidence only, no successor speedup claim |
 | v0.1.1 targeted correctness | 16,380-token full-vocabulary teacher-forced comparison: top-1 `8/8`, maximum KLD `0.000092598 <= 0.005`; all four output64 runs finite; complete output512 successor matrix remains open |
-| v0.1.1 publication blockers | full 21-case ABBA8 product gate, successor smoothness/memory rollup, final runtime/wheel/evidence packaging, security audit, public source/tag/Release upload, and anonymous checksum verification |
+| v0.1.1 publication blockers | full 21-case ABBA8 product gate, successor smoothness/memory rollup, final runtime/wheel/evidence packaging, security audit, annotated tag/canonical Release upload, and anonymous checksum verification |
 | product model | locked `/home/intel/Qwen3.6-35B-A3B-ov` U4 IR; model fingerprint `eb05132e47fe...d7ec` |
 | frozen v0.1.0 formal matrix | all `21/21` exact-bucket prompt cases, output512, at least eight interleaved ABBA blocks per case |
 | frozen v0.1.0 paired inference | minimum prefill/decode/total one-sided 95% LCB `1.479464/1.591514/1.581939x`; applies only to the released seq2300 fingerprints |

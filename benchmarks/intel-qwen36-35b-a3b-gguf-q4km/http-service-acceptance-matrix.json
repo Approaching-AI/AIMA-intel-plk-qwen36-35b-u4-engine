@@ -18,6 +18,12 @@
     "source_commit": "bf54afe77a493e26a094ef5e074dbb19afc15cb6",
     "released_long_plugin_sha256": "01c04ced415a7b7a5e5bda77a995b2b97b68eb3d9f2c5f3396844d042ddda269",
     "fixed_long_plugin_sha256": "c0515a401f579620c2fb440031e87e848ceaefab572715d4ace2b76ff2956121",
+    "public_source": {
+      "status": "published_on_main_without_successor_tag",
+      "commit": "af3753db721b40d28b30773468d4b0c10d1cb45a",
+      "personal_and_canonical_heads_match": true,
+      "v0_1_0_release_warning_published": true
+    },
     "targeted_gate": {
       "fast_tests": {
         "passed": 67,
@@ -52,7 +58,7 @@
       "repeat the full 21-case output512 ABBA8 performance and correctness gate for the fixed fingerprint",
       "repeat successor smoothness and full-request memory rollups",
       "build and audit final runtime, wheelhouse, wheel, and evidence payloads",
-      "publish synchronized source and annotated successor tag",
+      "create the annotated successor tag after all gates pass",
       "upload the canonical release and verify every asset anonymously against SHA256SUMS"
     ]
   },
