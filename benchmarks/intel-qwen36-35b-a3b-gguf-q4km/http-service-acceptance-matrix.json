@@ -1,6 +1,6 @@
 {
-  "contract_version": "0.4",
-  "evaluated_at": "2026-08-09",
+  "contract_version": "0.5",
+  "evaluated_at": "2026-08-12",
   "service_contract": "contracts/qwen36-openai-http-service-contract.json",
   "release_status": {
     "bound_target_technical_candidate": "pass",
@@ -9,6 +9,52 @@
     "source_tag_commit": "f4707fd1af6a87390fc29c104acd5ce6a145c261",
     "anonymous_download_sha256_verification": "pass",
     "uploaded_asset_count": 6
+  },
+  "successor_release_candidate": {
+    "version": "0.1.1",
+    "status": "targeted_maintenance_validation_passed_full_promotion_pending",
+    "reason": "v0.1.0 long-profile arbitrary-length requests can expose a physical/logical LM-head buffer-layout mismatch at the 32-token-prefill to one-token-query transition",
+    "incident_and_measurement_record": "benchmarks/intel-qwen36-35b-a3b-gguf-q4km/http-near-boundary-regression-2026-08-12.json",
+    "source_commit": "bf54afe77a493e26a094ef5e074dbb19afc15cb6",
+    "released_long_plugin_sha256": "01c04ced415a7b7a5e5bda77a995b2b97b68eb3d9f2c5f3396844d042ddda269",
+    "fixed_long_plugin_sha256": "c0515a401f579620c2fb440031e87e848ceaefab572715d4ace2b76ff2956121",
+    "targeted_gate": {
+      "fast_tests": {
+        "passed": 67,
+        "failed": 0
+      },
+      "real_http": {
+        "passed": 18,
+        "failed": 0,
+        "near_boundary_prompt_tokens": [16380, 32758, 65519, 131037],
+        "near_boundary_status_200": 4,
+        "maximum_context_prompt_tokens": 131072,
+        "maximum_context_status": 200,
+        "json_and_sse_streaming_covered": true,
+        "artifact_sha256": "d3ee0a344d8d3a7fa7fc38601666d00c7c0829d1572dd0100f0491c9423eadfb"
+      },
+      "boundary_correctness": {
+        "prompt_tokens": 16380,
+        "teacher_forced_rows": 8,
+        "top1_rate": 1.0,
+        "maximum_kld": 0.00009259790838640914,
+        "maximum_kld_required": 0.005,
+        "artifact_sha256": "f05586f6531abe1d08a6e7568bad7f73cd55cc44c66d9cac8ee27af7b4d38903"
+      },
+      "source_rebuild": {
+        "bit_identical": true,
+        "artifact_sha256": "790ddb239d38da0fa9508be003558d86179832d68a4946bb5c9367875d9122be"
+      }
+    },
+    "speedup_claims_allowed": false,
+    "public_release_ready": false,
+    "remaining": [
+      "repeat the full 21-case output512 ABBA8 performance and correctness gate for the fixed fingerprint",
+      "repeat successor smoothness and full-request memory rollups",
+      "build and audit final runtime, wheelhouse, wheel, and evidence payloads",
+      "publish synchronized source and annotated successor tag",
+      "upload the canonical release and verify every asset anonymously against SHA256SUMS"
+    ]
   },
   "release_gate": {
     "unit_tests": {

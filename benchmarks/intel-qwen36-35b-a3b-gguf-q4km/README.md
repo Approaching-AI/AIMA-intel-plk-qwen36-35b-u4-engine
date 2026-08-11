@@ -13,5 +13,13 @@ checks live in:
 - `prompt-suites.json`
 - `prompts/`
 
+Published and maintenance evidence indexes:
+
+- `acceptance-matrix.json` — frozen product-performance and correctness gates
+- `http-service-acceptance-matrix.json` — HTTP/release gate state
+- `http-near-boundary-regression-2026-08-12.json` — `v0.1.0` arbitrary-length
+  incident plus controlled `v0.1.1` release-candidate performance,
+  correctness, memory, source-rebuild, and HTTP-smoke results
+
 These are small specs only. Long prompt payloads must be materialized in an
 artifact with exact active-tokenizer counts before any product claim.

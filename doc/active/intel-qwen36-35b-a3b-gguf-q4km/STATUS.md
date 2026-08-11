@@ -3,37 +3,39 @@
 > Single source of truth for the OPEN GATE + NEXT ACTION only. Machine state ->
 > `frontier.json`; decisions -> ledgers/ADRs; timeline -> `meta-log/`.
 >
-> Snapshot: 2026-08-09
+> Snapshot: 2026-08-12
 
 ## NEXT ACTION
 
-The Apache-2.0 `v0.1.0` publication is closed. The canonical
-`Approaching-AI` GitHub Release publishes the checksum-bound native runtime,
-CPython 3.12 wheelhouse, service wheel, and evidence archive from annotated
-source tag commit `f4707fd1af6a87390fc29c104acd5ce6a145c261`. All six Release
-assets were downloaded through their unauthenticated public URLs; `SHA256SUMS`
-verified the four payloads and `release-manifest.json`. Freeze seq2300 and the
-released fingerprints. Rerun inference only if runtime payload or service code
-changes; any successor must pass the complete product and publication gates.
+Keep Apache-2.0 `v0.1.0` and seq2300 frozen as historical exact-fingerprint
+results. The released long plugin has a reproduced arbitrary-length service
+defect at the 32-token-prefill to one-token-query transition. The `v0.1.1`
+release-candidate reinterpretation fix passes targeted 16,380/32,758/65,519/
+131,037-token performance, boundary correctness, 67/67 fast tests, 18/18 real
+HTTP smoke, maximum context, and bit-identical source rebuild checks. Do not
+publish or transfer the seq2300 speedup claim to the successor fingerprint.
+Run the complete 21-case output512 ABBA8 performance, correctness, smoothness,
+and memory gate for the fixed plugin; then repeat packaging, security, source,
+runtime, canonical Release, and anonymous-download verification.
 
 ## Current Gate
 
 | field | value |
 |---|---|
-| open gate | **none for v0.1.0 — product, service, source, Release upload, and public download verification are closed** |
+| open gate | **v0.1.1 successor promotion — the complete product and publication gate must be repeated for fixed long-plugin SHA-256 `c0515a40...121`** |
+| frozen release | `v0.1.0` remains published at source tag commit `f4707fd1af6a87390fc29c104acd5ce6a145c261`; its formal seq2300 results apply only to the released fingerprints |
+| known v0.1.0 defect | arbitrary long lengths can reach a preallocated physical/logical LM-head layout mismatch; released plugin `01c04ced...269` reproduces the exact failure at 16,380 tokens |
+| fixed carrier | long plugin `c0515a401f57...121`; source state `77153ecf9ed7...067`; three-file delta `017f5eb4925c...ed`; standalone rebuild is bit-identical |
 | HTTP contract | Models, Completions, Chat Completions, and Responses create/retrieve/delete; JSON/SSE, function tools, structured outputs, byte/entry/TTL-bounded Responses state, bearer auth, bounded-cardinality metrics, request deadlines, graceful drain, and disconnect cancellation |
 | context contract | arbitrary caller lengths; smallest internal bucket; no padding/truncation; `prompt_tokens + requested_output_tokens <= max_context_length`; real HTTP checks at 33, 8207, and 131072 prompt tokens |
 | resident/cache gate | isolated profile/bucket worker processes; serial batch-1 execution; PID residency check passes; exact prefix-hit tokens match uncached output and bypass reports zero cached tokens |
 | identity gate | exact OpenVINO `90214e5be05`, GenAI, and Tokenizers build strings pass before model hashing; plugin build `106` and Python Runtime build `21902` are separate verified identities; full SHA-256 over 12 locked model files / `19,705,459,812 B` reproduces `eb05132e47fe...d7ec`; exact plugin and CONFIG_FILE hashes pass before readiness |
-| HTTP evidence | fast suite `66/66`; long/max real smoke `17/17`; final OpenAI Python SDK `2.53.0` smoke `19/19`, covering Models, Completions/Chat/Responses JSON and streams, state lifecycle, and Chat/Responses function tools |
-| release artifacts | canonical public `v0.1.0` Release with six uploaded assets: 42-file RC7 checksum/notices native runtime bundle with Apache-2.0, selected model policy, verified short/long 50-file source postimages, and bit-identical rebuilds; deterministic 14-wheel RC12 offline Python wheelhouse with hash-required install and service wheel `0.1.0`; evidence archive, `release-manifest.json`, and `SHA256SUMS`; hardened systemd deployment (`1.7 OK`); zero-finding strict audit over all 10 index-resolvable distributions plus explicit exact-hash/source coverage for non-index artifacts |
-| publication blockers | none for `v0.1.0`; personal upstream and exact `Approaching-AI` fork are public and Apache-2.0, synchronized source/tag identity is verified, the canonical Release is non-draft/non-prerelease, and anonymous re-download passes `SHA256SUMS` |
+| v0.1.1 targeted HTTP evidence | fast suite `67/67`; real smoke `18/18`, including JSON/SSE, all four reproduced near-boundary lengths with status 200, and exact 131,072-token maximum context |
+| v0.1.1 targeted performance | controlled single-run output64 rows at 16,380/32,758/65,519/131,037 tokens: TTFT `15.200/76.482/104.199/185.026 s`; inter-token decode `46.49/39.58/30.41/21.09 tok/s`; maintenance evidence only, no successor speedup claim |
+| v0.1.1 targeted correctness | 16,380-token full-vocabulary teacher-forced comparison: top-1 `8/8`, maximum KLD `0.000092598 <= 0.005`; all four output64 runs finite; complete output512 successor matrix remains open |
+| v0.1.1 publication blockers | full 21-case ABBA8 product gate, successor smoothness/memory rollup, final runtime/wheel/evidence packaging, security audit, public source/tag/Release upload, and anonymous checksum verification |
 | product model | locked `/home/intel/Qwen3.6-35B-A3B-ov` U4 IR; model fingerprint `eb05132e47fe...d7ec` |
-| promoted carrier | short profile fingerprint `23f09faa9842...11c` with seq2291 plugin `b63eede5177f...e12`; long profile fingerprint `24aeff1e89e2...3f` |
-| formal matrix | all `21/21` bucket/prompt cases, output512, at least eight interleaved ABBA blocks per case |
-| paired inference | minimum prefill/decode/total one-sided 95% LCB `1.479464/1.591514/1.581939x`; every 32k/64k/128k phase clears `1.10x`, every shorter phase clears `0.98x` |
-| absolute long floors | every required floor passes; minimum prefill/decode margin `209.468759/0.272092 tok/s` |
-| correctness | exact greedy output512 tokens in every required row; minimum top-1 `1.0`; maximum KLD `0.004836565 <= 0.005` |
-| smoothness | target-normalized prefill/decode CV `0.130518/0.016233`; minimum adjacent retention `1.003732/0.979074`; all `336` jitter rows pass, max P95/P50 `1.162728` |
-| isolation and memory | `712` memory rows; max RSS/swap `8,068,968,448/6,544,089,088 B`; minimum available `12,157,624,320 B`; zero OOM/guard events |
-| formal evidence | seq2299 gate SHA256 `54a9e432374c...645`; seq2300 rollup SHA256 `2781c586b636...6b9` |
+| frozen v0.1.0 formal matrix | all `21/21` exact-bucket prompt cases, output512, at least eight interleaved ABBA blocks per case |
+| frozen v0.1.0 paired inference | minimum prefill/decode/total one-sided 95% LCB `1.479464/1.591514/1.581939x`; applies only to the released seq2300 fingerprints |
+| frozen v0.1.0 correctness | exact greedy output512 tokens in every required row; minimum top-1 `1.0`; maximum KLD `0.004836565 <= 0.005` |
+| frozen v0.1.0 formal evidence | seq2299 gate SHA256 `54a9e432374c...645`; seq2300 rollup SHA256 `2781c586b636...6b9` |

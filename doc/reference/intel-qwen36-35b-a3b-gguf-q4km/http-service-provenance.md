@@ -1,6 +1,6 @@
 # HTTP service runtime provenance
 
-Snapshot: 2026-08-06
+Snapshot: 2026-08-12
 
 This is the release inventory for the resident HTTP carrier. Runtime assets
 are deliberately external to the Python package; their identity is verified
@@ -24,22 +24,25 @@ before a worker becomes ready.
 
 The runtime bundle contains a consolidated, binary-safe source postimage for
 the promoted short plugin plus a checksum-locked three-file delta for the
-promoted long plugin; historical route patches under `engine/openvino/` are
+selected long plugin; historical route patches under `engine/openvino/` are
 not treated as a composable release stack. The graph constructor used by the
 service is `tools/intel_qwen36_openvino_hot_cold_attention.py`.
 
-## Promoted plugins
+## Versioned plugin identities
 
-| service profile | prompt buckets | required plugin SHA-256 |
-|---|---|---|
-| `short_full` | 2048, 4096, 8192 | `b63eede5177f4f9e05d02e97d9f24f52b4289504c2a7c7b4e06c580d1d880e12` |
-| `long_compact` | 16384, 32768, 65536, 131072 | `01c04ced415a7b7a5e5bda77a995b2b97b68eb3d9f2c5f3396844d042ddda269` |
-| `long_full` | 16384, 32768, 65536, 131072 | `01c04ced415a7b7a5e5bda77a995b2b97b68eb3d9f2c5f3396844d042ddda269` |
+| version/state | service profile | prompt buckets | required plugin SHA-256 |
+|---|---|---|---|
+| `v0.1.0` released | `short_full` | 2048, 4096, 8192 | `b63eede5177f4f9e05d02e97d9f24f52b4289504c2a7c7b4e06c580d1d880e12` |
+| `v0.1.0` released | `long_compact`, `long_full` | 16384, 32768, 65536, 131072 | `01c04ced415a7b7a5e5bda77a995b2b97b68eb3d9f2c5f3396844d042ddda269` |
+| `v0.1.1` candidate | `short_full` | 2048, 4096, 8192 | `b63eede5177f4f9e05d02e97d9f24f52b4289504c2a7c7b4e06c580d1d880e12` |
+| `v0.1.1` candidate | `long_compact`, `long_full` | 16384, 32768, 65536, 131072 | `c0515a401f579620c2fb440031e87e848ceaefab572715d4ace2b76ff2956121` |
 
-The short plugin is the seq2291 affine-Q4 full-logit carrier. The long plugin
-is the accepted seq2119 carrier; `long_compact` exposes its promoted token-only
-greedy path, while `long_full` is used when sampling, penalties, or log
-probabilities require full logits. Each profile runs in its own process so
+The short plugin is the seq2291 affine-Q4 full-logit carrier. The released long
+plugin is the accepted seq2119 carrier; `long_compact` exposes its promoted
+token-only greedy path, while `long_full` is used when sampling, penalties, or
+log probabilities require full logits. The candidate long plugin preserves
+that carrier and adds the required logical reinterpretation of preallocated
+LM-head buffers. Each profile runs in its own process so
 plugin registry, environment properties, graph state, and compile cache cannot
 leak across profiles.
 
@@ -48,6 +51,11 @@ rollup recorded in the active status board and accepted-cuts ledger. Changing a
 plugin, OpenVINO build, CONFIG_FILE, driver, model, or graph constructor creates
 a new unvalidated carrier; updating a hard-coded hash is not a substitute for
 the full correctness/performance gate.
+
+That rule applies to the candidate SHA-256 `c0515a40...121`: its targeted
+near-boundary checks pass, but it is not promoted until the complete successor
+gate passes. The incident and measurement record is
+`benchmarks/intel-qwen36-35b-a3b-gguf-q4km/http-near-boundary-regression-2026-08-12.json`.
 
 ### Exact plugin rebuilds
 
@@ -61,13 +69,20 @@ The result is
 `output/http-openvino-source-rebuild-20260806/result.json`; detailed steps are
 in `openvino-plugin-rebuild.md`.
 
-The long postimage reproduces the historical seq2119 source state rather than
-combining its LM-head with later short-route fusion changes. Its LM-head object
+The published `v0.1.0` long postimage reproduces the historical seq2119 source
+state rather than combining its LM-head with later short-route fusion changes. Its LM-head object
 matches the accepted archive byte-for-byte, and the full 51,296,736-byte
 plugin rebuild matches SHA-256
 `01c04ced415a7b7a5e5bda77a995b2b97b68eb3d9f2c5f3396844d042ddda269`.
 The result is
 `output/http-openvino-long-source-rebuild-20260806/result.json`.
+
+The `v0.1.1` candidate long postimage changes only the three-file profile
+delta. Its source state is `77153ecf9ed7...067`, its LM-head source is 106,546
+bytes at SHA-256 `81be0135a12f...1a4`, and its 51,296,736-byte plugin is
+SHA-256 `c0515a401f57...121`. A clean build reproduced it bit-for-bit; the
+result-record SHA-256 is `790ddb239d38...2be`. This is source-identity evidence,
+not successor promotion.
 
 The plugin's embedded build `106` and the Python Runtime build `21902` are
 separate artifact identities. Both are intentional and independently checked.
@@ -142,10 +157,10 @@ re-download of all six assets passes the published `SHA256SUMS`.
 
 The accepted plugin and exact OpenVINO Python binaries are also not tracked.
 The repository provides
-`tools/intel-qwen36-package-runtime-assets.py`, which verifies the two promoted
-plugin identities and packages them with graph helpers, all referenced custom
-OpenCL sources, OpenVINO license/third-party notices, and a per-file checksum
-manifest. The 42-file RC7 bundle additionally carries both exact source
+`tools/intel-qwen36-package-runtime-assets.py`, which verifies the two selected
+source-tree plugin identities and packages them with graph helpers, all
+referenced custom OpenCL sources, OpenVINO license/third-party notices, and a
+per-file checksum manifest. The 42-file RC7 bundle additionally carries both exact source
 postimages, both plugin rebuild recipes, the project Apache-2.0 license, the
 selected publication policy, and the locked-model provenance boundary. The
 tool also fails on

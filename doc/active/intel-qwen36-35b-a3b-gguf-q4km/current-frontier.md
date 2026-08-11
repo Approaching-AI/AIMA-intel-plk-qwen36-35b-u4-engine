@@ -1,7 +1,7 @@
 # Current Frontier - Tier-3 pointer
 
 > Workstream: `intel-qwen36-35b-a3b-gguf-q4km`
-> Snapshot: 2026-08-09
+> Snapshot: 2026-08-12
 
 Read this pointer, then `STATUS.md`. This is not a run log.
 
@@ -12,7 +12,8 @@ Read this pointer, then `STATUS.md`. This is not a run log.
 - Route decisions: `routes-ledger.json` plus accepted/rejected ledgers.
 - Evidence: `meta-log/2026-08-05.md` for seq2300,
   `meta-log/2026-08-06.md` for the resident HTTP release layer, and
-  `meta-log/2026-08-09.md` for public Release closure.
+  `meta-log/2026-08-09.md` for public Release closure, and
+  `meta-log/2026-08-12.md` for the near-boundary incident and successor gate.
 - Thresholds: `benchmarks/intel-qwen36-35b-a3b-gguf-q4km/acceptance-matrix.json`.
 
 ## Current state
@@ -45,12 +46,25 @@ Read this pointer, then `STATUS.md`. This is not a run log.
   unauthenticated external asset downloads are verified. The downloaded
   payloads and manifest pass the published `SHA256SUMS`; no `v0.1.0`
   publication gate remains.
+- A post-release arbitrary-length service run exposed a long-profile LM-head
+  physical/logical layout mismatch after a 32-token prefill tail transitions
+  to the one-token query. The released `v0.1.0` plugin reproduces the failure
+  at 16,380 tokens; the same operator report covers 32,758, 65,519, and
+  131,037 tokens. This does not alter the exact-bucket seq2300 evidence, but it
+  is a known defect in the broader arbitrary-length service contract.
+- The independently fingerprinted `v0.1.1` candidate reinterprets preallocated
+  buffers to the active logical layouts. Fixed long-plugin SHA-256 is
+  `c0515a401f57...121`. Targeted validation passes all four reproduced lengths,
+  maximum context, 67/67 fast tests, 18/18 HTTP smoke, an 8-row
+  full-vocabulary comparison with top-1 `1.0` and maximum KLD `0.000092598`,
+  and a bit-identical source rebuild. These are maintenance checks, not a new
+  formal performance promotion.
 
 ## Next action
 
-Freeze the promoted carrier and its exact fingerprints. Further optimization
-is optional successor work, not an open acceptance gap: admit only a new,
-independently fingerprinted, profile-backed kernel route and require the same
-complete product gate before it can replace seq2300. `v0.1.0` is frozen; a
-successor release must repeat the source, runtime, correctness, security, and
-external-download gates.
+Keep `v0.1.0` and seq2300 frozen as historical exact-fingerprint evidence. Run
+the complete 21-case output512 ABBA8 performance/correctness/smoothness/memory
+gate for fixed long-plugin SHA-256 `c0515a401f57...121`. Only after that passes
+may the successor repeat runtime packaging, source reconstruction, security,
+public source/tag/Release upload, and anonymous external-download verification.
+Do not publish `v0.1.1` or transfer seq2300 speedup claims before those gates.

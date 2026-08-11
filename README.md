@@ -28,6 +28,32 @@ bottlenecks. It is intentionally not a generic serving runtime.
   reach at least `1.10x` untouched same-host stock OpenVINO GPU in both prefill
   and decode for every accepted bucket; see the goal and acceptance matrix
 
+## Release Status and Known Issue
+
+`v0.1.0` is the published Apache-2.0 release, but it is frozen with a known
+service defect: long prompts near the 16k/32k/64k/128k bucket ceilings can fail
+at the final prefill-output transition with `IQ36 LM-head runtime layout
+differs from the locked contiguous contract`. The failure was reproduced at
+16,380 tokens with the released plugin; the original operational report saw
+the same failure at 16,380, 32,758, 65,519, and 131,037 tokens. Do not rely on
+`v0.1.0` for arbitrary-length long-context service traffic.
+
+The source tree now contains the `v0.1.1` release-candidate fix. All four
+affected lengths return HTTP 200, a 131,072-token maximum-context check passes,
+the service suite passes 67/67 and the real HTTP smoke passes 18/18. A targeted
+full-vocabulary correctness comparison at 16,380 tokens has top-1 agreement
+8/8 and maximum KLD `0.000092598` against the `0.005` limit. The fixed long
+plugin also rebuilds bit-for-bit. Exact TTFT, decode throughput, memory, method,
+correctness, limitations, and artifact hashes are in
+[`BENCHMARKS.md`](BENCHMARKS.md) and the
+[machine-readable regression record](benchmarks/intel-qwen36-35b-a3b-gguf-q4km/http-near-boundary-regression-2026-08-12.json).
+
+The candidate has not inherited the old speedup claim and is not yet a final
+release: the complete 21-case output512 ABBA8 successor gate still has to be
+repeated for the new plugin fingerprint. JSON and SSE streaming are supported
+for Completions, Chat Completions, and Responses and are covered by real HTTP
+smoke tests.
+
 ## Published v0.1.0 Results
 
 The promoted cold/no-prefix matrix passes all `21/21` cases at output 512. It

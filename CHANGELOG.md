@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Fixed the long-profile LM-head binding for preallocated buffers whose
+  physical allocation is larger than the active logical layout. This removes
+  the reproduced `v0.1.0` near-bucket failure at 16,380, 32,758, 65,519, and
+  131,037 prompt tokens without weakening the contiguous-layout assertions.
+- Added a reproducible near-boundary benchmark runner and published controlled
+  TTFT, decode throughput, system/process memory, full-vocabulary boundary
+  correctness, 67/67 service tests, 18/18 real HTTP smoke, streaming coverage,
+  maximum-context validation, and bit-identical source-rebuild evidence.
+- Marked the fixed `v0.1.1` fingerprint as a release candidate pending the
+  complete 21-case output512 ABBA8 successor and publication gates; the frozen
+  `v0.1.0` seq2300 speedup claim is not transferred to it.
 - Added a first-class performance and correctness report with all 21 paired
   benchmark cases, per-case teacher-forced KLD and top-1 results, exact-token
   counts, context smoothness, jitter, memory, service validation, explicit

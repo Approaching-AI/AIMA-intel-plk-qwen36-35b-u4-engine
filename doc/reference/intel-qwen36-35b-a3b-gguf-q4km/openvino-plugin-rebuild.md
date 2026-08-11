@@ -1,34 +1,42 @@
-# Promoted OpenVINO GPU plugin rebuild
+# Released and successor OpenVINO GPU plugin rebuild
 
-Snapshot: 2026-08-06
+Snapshot: 2026-08-12
 
 This recipe reconstructs the exact OpenVINO/oneDNN working-tree postimages used
-by both promoted IQ36 GPU plugins and builds either profile with the recorded
-toolchain and CMake contract. Every source file, patch, commit, tool version,
-and final plugin hash is checked before the result can be reported as an exact
-rebuild.
+by the IQ36 GPU plugins and builds either profile with the recorded toolchain
+and CMake contract. The short profile is unchanged. The current source tree's
+long profile is the `v0.1.1` release candidate that fixes the arbitrary-length
+buffer-layout regression; the published `v0.1.0` runtime asset retains its own
+frozen historical recipe. Every source file, patch, commit, tool version, and
+final plugin hash is checked before the result can be reported as exact.
 
 This is a source-transparency and identity recipe. It does not make an
 arbitrary rebuilt plugin an accepted runtime: any output whose SHA-256 differs
 from the promoted value is rejected and must pass the complete product
 correctness/performance gate before deployment.
 
-## Bound identities
+## Current source-tree identities
 
 | input | required identity |
 |---|---|
 | OpenVINO | `90214e5be052438cec5617ed3ea7e37df1538f68` |
 | oneDNN GPU submodule | `20db47e2d3c4df1b66e93bed2e97d30da175512d` |
 | short source-state SHA-256 | `0776ca91cd9359a200f1e9a51afaeca83c2e9a9c5952dc2e552839ef12085743` |
-| long source-state SHA-256 | `b947c32eede6bb7f11429722503771706be6847cecf9905d58e9b0463f32817a` |
+| long source-state SHA-256 | `77153ecf9ed7fde3ae32efc78f08b0b0afeb9fe8802d83e34885ca9a292bd067` |
 | OpenVINO patch SHA-256 | `e722ba5f225273c8090c8610cd3fb80d2ffb0d2472d5e88511c4ad18ed046e9f` |
 | oneDNN patch SHA-256 | `090a385c0fc4f4384d34f79ee187bce7b8933df36ae03dc735f963f5ba716fd9` |
-| short-to-long source delta SHA-256 | `a38003733c79aafd062b59771dba57a784eb569bc25683206a46ac38048bef3e` |
+| short-to-long source delta SHA-256 | `017f5eb4925c993db3e084ffa1bd420a44ea8dc66db8765a9ffa47ad3722b2ed` |
 | plugin CI build identity | `2026.2.0-106-90214e5be05` |
 | expected short plugin SHA-256 | `b63eede5177f4f9e05d02e97d9f24f52b4289504c2a7c7b4e06c580d1d880e12` |
-| expected long plugin SHA-256 | `01c04ced415a7b7a5e5bda77a995b2b97b68eb3d9f2c5f3396844d042ddda269` |
+| expected long plugin SHA-256 | `c0515a401f579620c2fb440031e87e848ceaefab572715d4ace2b76ff2956121` |
 
-The runtime asset bundle contains `source-state.json`, both consolidated
+The published `v0.1.0` long-profile identities remain frozen for artifact
+verification only: source state `b947c32eede6...17a`, short-to-long delta
+`a38003733c79...f3e`, LM-head source 105,805 bytes at SHA-256
+`8373143a711e...e9`, and plugin SHA-256 `01c04ced415a...269`. Those values do
+not validate or substitute for the fixed candidate.
+
+The current candidate runtime asset bundle contains `source-state.json`, both consolidated
 binary-safe base patches, the three-file long-profile delta, and
 `build-openvino-plugin.py`. The short state records 48 modified or untracked
 OpenVINO files and two oneDNN files. The long state records 47 such OpenVINO
@@ -142,11 +150,19 @@ SHA-256
 Its compiled object is byte-identical to the object extracted from the
 accepted seq2119 graph archive at SHA-256
 `16dfdc03f2be76a99efcd67ed84f1330bbf629133b6c14e8e67765d62272d34b`.
-The full long rebuild result is recorded in
+That historical full long rebuild result is recorded in
 `output/http-openvino-long-source-rebuild-20260806/result.json`: 51,296,736
 bytes, SHA-256
 `01c04ced415a7b7a5e5bda77a995b2b97b68eb3d9f2c5f3396844d042ddda269`,
 with `bit_identical_to_promoted: true`.
+
+The fixed candidate LM-head source is 106,546 bytes at SHA-256
+`81be0135a12f6d94b87d5ef3ad9e72bf2dca243f98e4ab9c376a51b3a28d51a4`.
+An independent 2026-08-12 reconstruction verified source state
+`77153ecf9ed7...067` and produced the 51,296,736-byte candidate plugin at
+SHA-256 `c0515a401f57...121` bit-for-bit. The result record SHA-256 is
+`790ddb239d38da0fa9508be003558d86179832d68a4946bb5c9367875d9122be`.
+This establishes source reproducibility, not product promotion.
 
 ## Scope and deployment note
 
@@ -158,8 +174,8 @@ identities remain part of the deployment preflight. A loader check with all
 embedded RPATH entries inhibited resolved those three libraries from the
 offline-installed wheel and target OS.
 
-The bundled base snapshot and long delta are the exact source recipes for both
-accepted plugins. The exact OpenVINO, GenAI, and Tokenizers Python wheels
-remain separately checksummed runtime artifacts. Public release still requires
-distributing the selected binaries and wheels with their generated notices and
-manifests; rebuilding a different artifact does not inherit acceptance.
+The bundled base snapshot and long delta are the exact source recipes for the
+selected short plugin and candidate long plugin. The exact OpenVINO, GenAI,
+and Tokenizers Python wheels remain separately checksummed runtime artifacts.
+The fixed long fingerprint must still pass the complete successor product and
+publication gates; rebuilding it exactly does not inherit seq2300 acceptance.

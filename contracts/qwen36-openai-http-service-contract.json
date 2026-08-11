@@ -1,5 +1,5 @@
 {
-  "contract_version": "0.4",
+  "contract_version": "0.5",
   "workstream": "intel-qwen36-35b-a3b-gguf-q4km",
   "decision": "doc/adr/0078-adopt-resident-openai-http-service.md",
   "model": {

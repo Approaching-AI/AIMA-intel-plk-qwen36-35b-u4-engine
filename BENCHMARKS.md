@@ -1,11 +1,106 @@
-# v0.1.0 Performance and Correctness Report
+# Performance and Correctness Report
 
-This report publishes the performance, inference-equivalence correctness, and
-stability results used to promote `v0.1.0`. The detailed machine-readable
+This report separates two fingerprints and two evidence levels: the frozen
+`v0.1.0` formal product gate, and targeted `v0.1.1` release-candidate
+validation for an arbitrary-length service regression. The detailed `v0.1.0`
 records are in the checksum-bound
 [`v0.1.0` evidence archive](https://github.com/Approaching-AI/AIMA-intel-plk-qwen36-35b-u4-engine/releases/download/v0.1.0/AIMA-intel-plk-qwen36-35b-u4-engine-evidence-0.1.0.tar.zst).
+The new incident, method, raw numeric fields, artifact hashes, and promotion
+boundary are recorded in
+[`http-near-boundary-regression-2026-08-12.json`](benchmarks/intel-qwen36-35b-a3b-gguf-q4km/http-near-boundary-regression-2026-08-12.json).
 
-## Result
+## v0.1.1 release-candidate maintenance evidence
+
+### v0.1.0 service incident
+
+The published `v0.1.0` long plugin is correct for its promoted exact-bucket
+matrix, but an operational test exposed a broader service-contract defect at
+near-bucket prompt lengths. The exact-bucket seq2300 runs did not exercise the
+final 32-token-prefill to one-token-query layout transition.
+
+The initial operator table is reproduced below without filling in missing
+method details. Its prompt construction, output length, cache/warmup policy,
+and definition of peak memory were not supplied, so it is incident evidence,
+not a controlled performance comparison.
+
+| Input | Actual prompt tokens | TTFT | Decode tok/s | Reported peak memory | v0.1.0 result |
+|---:|---:|---:|---:|---:|:---:|
+| 2k | 2,048 | 1.12 s | 45.47 | 35.70 GB | pass |
+| 4k | 4,096 | 30.54 s | 49.14 | 37.15 GB | pass |
+| 8k | 8,192 | 33.53 s | 41.98 | 36.62 GB | pass |
+| 16k | 16,380 | failed | no valid value | 39.85 GB | fail |
+| 32k | 32,758 | failed | no valid value | 37.63 GB | fail |
+| 64k | 65,519 | failed | no valid value | 40.32 GB | fail |
+| 128k | 131,037 | failed | no valid value | 43.72 GB | fail |
+
+All four failed rows reported `IQ36 LM-head runtime layout differs from the
+locked contiguous contract` at the final prefill output. We independently
+reproduced the 16,380-token failure with the released long-plugin SHA-256
+`01c04ced...269`; the checksum-bound reproduction record is included in the
+machine-readable report.
+
+The failure was a physical-versus-logical buffer-layout mismatch when a
+preallocated buffer was reused for the one-token query. The fix reinterprets
+the activation and output buffers to the current logical layouts before
+retaining the exact contiguous assertions. The resulting `v0.1.1` candidate
+long plugin is 51,296,736 bytes with SHA-256 `c0515a40...121`; an independent
+source reconstruction produced that binary bit-for-bit.
+
+### Controlled near-boundary performance
+
+These are single targeted maintenance runs on the bound PTL host. Each row ran
+in a new OS process with batch 1, the fixed `long_compact` profile, no prefix
+cache, no warmup, greedy decoding with EOS ignored, and 64 output tokens. The
+prompt is the UTF-8 string `hello ` repeated `N-1` times. Compilation is
+reported separately and excluded from TTFT. Decode rate is the 63 inter-token
+intervals between 64 emitted tokens.
+
+| Prompt tokens | Bucket | Compile | TTFT | Decode tok/s | Peak system used | Max process RSS | Max process swap | Result |
+|---:|---:|---:|---:|---:|---:|---:|---:|:---:|
+| 16,380 | 16,384 | 34.667 s | 15.200 s | 46.49 | 41.89 GiB | 2.74 GiB | 0.00 GiB | pass |
+| 32,758 | 32,768 | 27.432 s | 76.482 s | 39.58 | 42.66 GiB | 3.79 GiB | 0.00 GiB | pass |
+| 65,519 | 65,536 | 38.581 s | 104.199 s | 30.41 | 44.25 GiB | 5.06 GiB | 0.99 GiB | pass |
+| 131,037 | 131,072 | 33.964 s | 185.026 s | 21.09 | 48.09 GiB | 7.37 GiB | 3.54 GiB | pass |
+
+Memory was sampled every 50 ms. `Peak system used` is `MemTotal - minimum
+MemAvailable`; RSS and swap are worker-process maxima from `/proc`. These
+definitions differ from the unspecified operator counter above. Exact raw
+milliseconds, bytes, prompt/token hashes, source identity, runtime versions,
+and per-run evidence SHA-256 values are in the machine-readable report. The
+runner is
+[`intel-qwen36-http-near-boundary-benchmark.py`](tools/intel-qwen36-http-near-boundary-benchmark.py).
+
+### Targeted correctness and service checks
+
+At the reproduced 16,380-token boundary, the fixed custom LM-head was compared
+against the same locked graph and OpenVINO GPU plugin with the custom LM-head
+disabled. The comparison uses full-vocabulary teacher-forced distributions.
+
+| Check | Candidate result | Limit | Status |
+|---|---:|---:|:---:|
+| Teacher-forced rows | 8 | 8 | pass |
+| Top-1 agreement | 8/8 (`1.0`) | at least `0.99` | pass |
+| Maximum KLD | `0.000092598` | at most `0.005` | pass |
+| Finite 64-token near-boundary generations | 4/4 | every row | pass |
+| Fast service tests | 67/67 | every test | pass |
+| Real HTTP smoke | 18/18 | every check | pass |
+| Near-boundary HTTP requests | 4/4 status 200 | every row | pass |
+| Maximum-context HTTP request | 131,072 tokens, status 200 | pass | pass |
+| Source rebuild | bit-identical SHA-256 `c0515a40...121` | exact | pass |
+
+The HTTP smoke also covers Chat and Responses SSE streaming; streaming remains
+part of the service contract. Raw-logit cosine is retained as a non-gating
+diagnostic (`0.797660` minimum), consistent with the frozen product gate's
+published interpretation.
+
+This targeted result closes the reproduced defect, but it does **not** promote
+the new fingerprint or inherit the old speedup claim. A `v0.1.1` release still
+requires the full 21-case output512 ABBA8 performance/correctness/smoothness
+matrix plus repeated source, runtime, packaging, security, and anonymous
+download gates. Until then, `v0.1.1` is a release candidate and `v0.1.0` is
+frozen with the known near-bucket service defect.
+
+## Frozen v0.1.0 formal product result
 
 The release passes all `21/21` required cases: seven prompt-length buckets,
 three prompt classes per bucket, and exactly 512 generated tokens per case.
