@@ -60,9 +60,10 @@ Read this pointer, then `STATUS.md`. This is not a run log.
   and a bit-identical source rebuild. These are maintenance checks, not a new
   formal performance promotion.
 - The candidate source and its performance/correctness disclosure are public
-  on both Apache-2.0 repositories at commit `af3753db721b...45a`; their `main`
-  heads match. The existing `v0.1.0` Release now carries a prominent warning.
-  No `v0.1.1` tag or Release exists while the successor gate is open.
+  on both Apache-2.0 repositories in commit `af3753db721b...45a`; their current
+  `main` heads are synchronized. The existing `v0.1.0` Release now carries a
+  prominent warning. No `v0.1.1` tag or Release exists while the successor
+  gate is open.
 
 ## Next action
 
