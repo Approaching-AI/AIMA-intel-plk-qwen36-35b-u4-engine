@@ -97,7 +97,7 @@ SOURCE_DATE_EPOCH=315532800 \
 
 python3 tools/intel-qwen36-package-python-runtime.py \
   --python /home/intel/ov/openvino_env/bin/python \
-  --service-wheel output/http-service-dist/intel_qwen36_server-0.1.0-py3-none-any.whl \
+  --service-wheel output/http-service-dist/intel_qwen36_server-0.1.1-py3-none-any.whl \
   --output output/http-python-wheelhouse
 ```
 

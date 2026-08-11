@@ -12,7 +12,7 @@ from .model_identity import MODEL_CONTRACT_RELATIVE
 SHORT_PLUGIN_SHA256 = (
     "b63eede5177f4f9e05d02e97d9f24f52b4289504c2a7c7b4e06c580d1d880e12")
 LONG_PLUGIN_SHA256 = (
-    "01c04ced415a7b7a5e5bda77a995b2b97b68eb3d9f2c5f3396844d042ddda269")
+    "c0515a401f579620c2fb440031e87e848ceaefab572715d4ace2b76ff2956121")
 CUSTOM_CONFIG_SHA256 = (
     "bd7a679031bbde2fa2626f2138bf79a5626469ccbc041faadef3b12e811200ad")
 PROMOTED_CONTEXT_CEILING = 131584
@@ -91,7 +91,7 @@ class ServerConfig:
       "/home/intel/intel-qwen36-r0/output/openvino-90214e-l0-gpu-seq2291/"
       "bin/intel64/Release/libopenvino_intel_gpu_plugin.so")
   long_plugin: Path = Path(
-      "/home/intel/intel-qwen36-r0/output/openvino-90214e-l0-gpu-seq2119/"
+      "/home/intel/intel-qwen36/output/openvino-90214e-l0-gpu-v011/"
       "bin/intel64/Release/libopenvino_intel_gpu_plugin.so")
   custom_config: Path = (
       DEFAULT_REPO_ROOT / "engine/openvino/custom/iq36_hot_attention_gqa.xml")
@@ -284,7 +284,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
       "--long-plugin", type=Path,
       default=Path(os.environ.get(
           "IQ36_LONG_PLUGIN",
-          str(sibling / "openvino-90214e-l0-gpu-seq2119/bin/intel64/"
+          str(repo / "output/openvino-90214e-l0-gpu-v011/bin/intel64/"
               "Release/libopenvino_intel_gpu_plugin.so"))))
   parser.add_argument(
       "--custom-config", type=Path,

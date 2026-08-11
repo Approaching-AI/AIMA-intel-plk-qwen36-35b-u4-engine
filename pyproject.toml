@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "intel-qwen36-server"
-version = "0.1.0"
+version = "0.1.1"
 description = "Resident OpenAI-compatible HTTP service for the locked Qwen3.6 OpenVINO U4 engine"
 readme = "engine/service/README.md"
 requires-python = ">=3.12,<3.13"

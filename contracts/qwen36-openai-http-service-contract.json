@@ -89,13 +89,13 @@
     "long_compact_greedy": {
       "buckets": [16384, 32768, 65536, 131072],
       "profile": "accepted_legacy_compact_long",
-      "plugin_sha256": "01c04ced415a7b7a5e5bda77a995b2b97b68eb3d9f2c5f3396844d042ddda269",
+      "plugin_sha256": "c0515a401f579620c2fb440031e87e848ceaefab572715d4ace2b76ff2956121",
       "requires_greedy_compatible_request": true
     },
     "long_full_logits": {
       "buckets": [16384, 32768, 65536, 131072],
       "profile": "accepted_legacy_full_logits",
-      "plugin_sha256": "01c04ced415a7b7a5e5bda77a995b2b97b68eb3d9f2c5f3396844d042ddda269",
+      "plugin_sha256": "c0515a401f579620c2fb440031e87e848ceaefab572715d4ace2b76ff2956121",
       "performance_promotion_claimed": false
     },
     "custom_config_sha256": "bd7a679031bbde2fa2626f2138bf79a5626469ccbc041faadef3b12e811200ad",

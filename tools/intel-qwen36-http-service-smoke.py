@@ -36,6 +36,10 @@ def parse_args() -> argparse.Namespace:
       "--max-context", action="store_true",
       help="also exercise an exact 131072-token prompt through HTTP")
   parser.add_argument(
+      "--near-boundaries", action="store_true",
+      help=("exercise the 16k-128k near-bucket query-one transitions that "
+            "regressed in v0.1.0"))
+  parser.add_argument(
       "--openai-sdk", action="store_true",
       help="also exercise JSON, streaming, tools, and state via OpenAI Python")
   args = parser.parse_args()
@@ -113,6 +117,22 @@ def parse_sse(body: bytes) -> list[dict[str, Any]]:
 
 def check(name: str, passed: bool, **evidence: Any) -> dict[str, Any]:
   return {"name": name, "pass": bool(passed), **evidence}
+
+
+def materialize_exact_prompt(tokenizer, target_tokens: int) -> tuple[str, int]:
+  repeat = max(1, target_tokens - 1)
+  observed = 0
+  for _ in range(8):
+    prompt = "hello " * repeat
+    observed = len(tokenizer.encode(prompt))
+    if observed == target_tokens:
+      return prompt, observed
+    repeat += target_tokens - observed
+    if repeat < 1:
+      break
+  raise RuntimeError(
+      f"could not materialize {target_tokens} tokens; last count was "
+      f"{observed}")
 
 
 def main() -> int:
@@ -399,18 +419,7 @@ def main() -> int:
       current_workers=resident_workers))
 
   if args.long:
-    repeat = 8206
-    for _ in range(8):
-      long_prompt = "hello " * repeat
-      long_tokens = len(tokenizer.encode(long_prompt))
-      if long_tokens == 8207:
-        break
-      repeat += 8207 - long_tokens
-      if repeat < 1:
-        raise RuntimeError("failed to materialize the long prompt")
-    else:
-      raise RuntimeError(
-          f"could not materialize 8207 tokens; last count was {long_tokens}")
+    long_prompt, long_tokens = materialize_exact_prompt(tokenizer, 8207)
 
     status, _, body, elapsed = client.request(
         "POST", "/v1/completions", {
@@ -429,7 +438,7 @@ def main() -> int:
         ready_status == 200 and len(compact_workers) == 1 and
         compact_workers[0].get("profile") == "long_compact" and
         compact_workers[0].get("plugin_sha256") ==
-            "01c04ced415a7b7a5e5bda77a995b2b97b68eb3d9f2c5f3396844d042ddda269",
+            "c0515a401f579620c2fb440031e87e848ceaefab572715d4ace2b76ff2956121",
         status=status, elapsed_ms=elapsed * 1000.0,
         prompt_tokens=compact.get("usage", {}).get("prompt_tokens"),
         system_fingerprint=compact_fingerprint,
@@ -453,26 +462,57 @@ def main() -> int:
         ready_status == 200 and len(full_workers) == 1 and
         full_workers[0].get("profile") == "long_full" and
         full_workers[0].get("plugin_sha256") ==
-            "01c04ced415a7b7a5e5bda77a995b2b97b68eb3d9f2c5f3396844d042ddda269",
+            "c0515a401f579620c2fb440031e87e848ceaefab572715d4ace2b76ff2956121",
         status=status, elapsed_ms=elapsed * 1000.0,
         prompt_tokens=full.get("usage", {}).get("prompt_tokens"),
         system_fingerprint=full_fingerprint,
         loaded_workers=full_workers))
 
+  if args.near_boundaries:
+    near_rows = []
+    for expected_tokens, expected_bucket in (
+        (16380, 16384), (32758, 32768),
+        (65519, 65536), (131037, 131072),
+    ):
+      near_prompt, materialized_tokens = materialize_exact_prompt(
+          tokenizer, expected_tokens)
+      status, _, body, elapsed = client.request(
+          "POST", "/v1/completions", {
+              "model": args.model, "prompt": near_prompt,
+              "temperature": 0, "max_tokens": 4,
+              "prefix_cache": False,
+          })
+      value = decode_json(body)
+      ready_status, _, ready_body, _ = client.request("GET", "/readyz")
+      worker_rows = decode_json(ready_body).get("loaded_workers", [])
+      observed_tokens = value.get("usage", {}).get("prompt_tokens")
+      expected_fingerprint = f"iq36-long_compact-{expected_bucket}"
+      row_passed = (
+          materialized_tokens == expected_tokens and status == 200 and
+          observed_tokens == expected_tokens and
+          value.get("system_fingerprint") == expected_fingerprint and
+          ready_status == 200 and len(worker_rows) == 1 and
+          worker_rows[0].get("profile") == "long_compact" and
+          worker_rows[0].get("bucket") == expected_bucket and
+          worker_rows[0].get("plugin_sha256") ==
+              "c0515a401f579620c2fb440031e87e848ceaefab572715d4ace2b76ff2956121")
+      near_rows.append({
+          "pass": row_passed,
+          "expected_prompt_tokens": expected_tokens,
+          "observed_prompt_tokens": observed_tokens,
+          "bucket": expected_bucket,
+          "status": status,
+          "elapsed_ms": elapsed * 1000.0,
+          "system_fingerprint": value.get("system_fingerprint"),
+          "loaded_workers": worker_rows,
+      })
+    checks.append(check(
+        "near_bucket_query_one_transitions",
+        all(row["pass"] for row in near_rows), rows=near_rows))
+
   if args.max_context:
-    repeat = 131071
-    for _ in range(8):
-      maximum_prompt = "hello " * repeat
-      maximum_tokens = len(tokenizer.encode(maximum_prompt))
-      if maximum_tokens == 131072:
-        break
-      repeat += 131072 - maximum_tokens
-      if repeat < 1:
-        raise RuntimeError("failed to materialize the maximum prompt")
-    else:
-      raise RuntimeError(
-          "could not materialize 131072 tokens; last count was "
-          f"{maximum_tokens}")
+    maximum_prompt, maximum_tokens = materialize_exact_prompt(
+        tokenizer, 131072)
     status, _, body, elapsed = client.request(
         "POST", "/v1/completions", {
             "model": args.model, "prompt": maximum_prompt,
@@ -652,7 +692,7 @@ def main() -> int:
 
   passed = all(row["pass"] for row in checks)
   result = {
-      "schema": "iq36-http-service-smoke-v1",
+      "schema": "iq36-http-service-smoke-v2",
       "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
       "base_url": args.base_url, "model": args.model,
       "openai_sdk_version": sdk_version,

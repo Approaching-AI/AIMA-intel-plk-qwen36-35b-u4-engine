@@ -25,6 +25,13 @@ class RuntimeRoutingTest(unittest.TestCase):
     self.assertEqual(len(ranges), 16)
     self.assertTrue(all(right - left == 1 for left, right in ranges[1:]))
 
+  def test_release_near_bucket_cases_cross_from_32_to_query_one(self):
+    for end in (16380, 32758, 65519, 131037):
+      widths = [right - left for left, right in
+                OpenVinoRuntime._prefill_ranges(0, end)]
+      self.assertIn((32, 1), tuple(zip(widths, widths[1:])), end)
+      self.assertEqual(sum(widths), end)
+
   def test_empty_suffix_has_no_work(self):
     self.assertEqual(list(OpenVinoRuntime._prefill_ranges(10, 10)), [])
 

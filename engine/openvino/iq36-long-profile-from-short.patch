@@ -890,7 +890,44 @@
                       ",\"correction_reuses_source_weights\":true" +
                       ",\"source_weight_format\":\"" + weights_layout.format.to_string() +
                       "\",\"source_scale_format\":\"" + scales_layout.format.to_string() + "\"}");
-@@ -3012,7 +2406,6 @@
+@@ -2947,21 +2341,31 @@
+                         "IQ36 LM-head activation must come from DynamicQuantize");
+ 
+         const auto& source_dependency = dependency.first->dependencies().at(0);
+-        auto activation = source_dependency.first->output_memory_ptr(source_dependency.second);
++        auto& engine = instance.get_network().get_engine();
++        auto allocated_activation = source_dependency.first->output_memory_ptr(source_dependency.second);
++        const auto& activation_layout =
++            source_dependency.first->get_impl_params()->get_output_layout(source_dependency.second);
++        auto activation = engine.reinterpret_buffer(*allocated_activation, activation_layout);
+         auto weights = instance.weights_memory();
+         auto weight_scales = instance.dep_memory_ptr(2);
++        auto allocated_output = instance.output_memory_ptr(0);
++        const auto& output_layout = instance.get_impl_params()->get_output_layout(0);
++        auto output = engine.reinterpret_buffer(*allocated_output, output_layout);
+         OPENVINO_ASSERT(activation->get_layout().data_type == data_types::f16 &&
+                         activation->get_layout().format == format::bfyx &&
++                        activation->get_layout().get_linear_offset() == 0 &&
+                         activation->get_layout().get_linear_size() == kColumns &&
+-                        instance.output_memory_ptr(0)->get_layout().format == format::bfyx &&
+-                        instance.output_memory_ptr(0)->get_layout().get_linear_size() == kRows,
+-                        "IQ36 LM-head runtime layout differs from the locked contiguous contract");
++                        output->get_layout().format == format::bfyx &&
++                        output->get_layout().get_linear_offset() == 0 &&
++                        output->get_layout().get_linear_size() == kRows,
++                        "IQ36 LM-head runtime layout differs from the locked contiguous contract; activation=",
++                        activation->get_layout().to_string(), ", output=", output->get_layout().to_string());
+         prepare_packed_weights(instance, weights, weight_scales);
+ 
+         kernel_arguments_data args;
+         args.inputs = {activation, weights, weight_scales};
+         args.weights = _packed_weights;
+-        args.outputs = {instance.output_memory_ptr(0)};
++        args.outputs = {output};
+         return args;
+     }
+ 
+@@ -3012,7 +2416,6 @@
      const bool binary = binary_enabled();
      const bool gated_exact = binary_gated_exact_enabled();
      const bool gated_q4 = binary_gated_q4_enabled();
@@ -898,7 +935,7 @@
      const bool greedy_local2 = binary_greedy_local2_enabled();
      const bool token_only = binary_token_only_enabled();
      const size_t binary_local_topk =
-@@ -3031,7 +2424,6 @@
+@@ -3031,7 +2434,6 @@
                   ",\"columns\":" + std::to_string(kColumns) +
                   ",\"packed_bytes\":" +
                       std::to_string(
@@ -906,7 +943,7 @@
                           gated_q4 ? kBinaryGatedQ4PackedBytes
                                    : binary ? kBinaryPackedBytes : kPackedBytes) +
                   ",\"topk\":" +
-@@ -3053,17 +2445,7 @@
+@@ -3053,17 +2455,7 @@
                              : std::string("+") + kOutputSelectKernelName + "+" +
                                  kMergeKernelName + "+" +
                                  kDirectCorrectionKernelName) +
@@ -925,7 +962,7 @@
                              std::string("+") + kBinaryGatedExactResetKernelName + "+" +
                                  kBinaryGatedExactCollectKernelName + "+" +
                                  kBinaryGatedExactKernelName + "+" +
-@@ -3087,17 +2469,14 @@
+@@ -3087,17 +2479,14 @@
                   "\",\"direct_correction_topk\":" + std::to_string(kTopK) +
                   ",\"adaptive_correction_delta\":" +
                       std::to_string(

@@ -3,5 +3,4 @@
 from .config import ServerConfig
 
 __all__ = ["ServerConfig"]
-__version__ = "0.1.0"
-
+__version__ = "0.1.1"
