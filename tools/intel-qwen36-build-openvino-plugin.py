@@ -36,7 +36,7 @@ LONG_PROFILE_PATCH_SHA256 = (
 SHORT_SOURCE_STATE_SHA256 = (
     "0776ca91cd9359a200f1e9a51afaeca83c2e9a9c5952dc2e552839ef12085743")
 LONG_SOURCE_STATE_SHA256 = (
-    "f7f487bd7268befed463b9a0ee98824e520d9b643fd35ab9bd41ee49b45d62ee")
+    "77153ecf9ed7fde3ae32efc78f08b0b0afeb9fe8802d83e34885ca9a292bd067")
 LM_HEAD_PATH = (
     "src/plugins/intel_gpu/src/graph/impls/ocl/iq36_lm_head_i8q4.cpp")
 FC_HORIZONTAL_PATH = (
